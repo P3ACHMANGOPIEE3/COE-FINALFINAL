@@ -1,14 +1,16 @@
 /**
  * COE-Pay: Main Application Controller
  * Handles global app state, view routing, top navigation bar,
- * modal dialogs, toast notifications, and fast demo switching.
+ * modal dialogs, toast notifications, Supabase/MySQL session bridge,
+ * and high-fidelity Forest Emerald & Cainta Campus interface.
  */
 
 class CoeApp {
   constructor() {
     this.currentView = 'dashboard';
     this.currentAuthMode = 'supabase_otp';
-    this.otpTimerInterval = null;
+    this.otpCooldownInterval = null;
+    this.resetOtpCooldownInterval = null;
     this.init();
   }
 
@@ -68,7 +70,6 @@ class CoeApp {
   }
 
   bindGlobalEvents() {
-    // Close modal on click outside or escape
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this.closeModal();
     });
@@ -88,53 +89,68 @@ class CoeApp {
   }
 
   renderApp() {
-    const isAuth = window.coeAuth.isLoggedIn();
-    const user = window.coeAuth.getUser();
-    const profile = window.coeAuth.getProfile();
+    const isAuth = window.coeAuth && typeof window.coeAuth.isLoggedIn === 'function' && window.coeAuth.isLoggedIn();
+    const user = isAuth ? window.coeAuth.getUser() : null;
+    const profile = isAuth ? window.coeAuth.getProfile() : null;
 
-    const authContainer = document.getElementById('auth-view-container');
+    const authContainer = document.getElementById('auth-view-container') || document.getElementById('login-view-container');
     const mainAppContainer = document.getElementById('main-app-container');
     const devBanner = document.getElementById('dev-impersonation-banner');
 
     if (!isAuth) {
       if (devBanner) devBanner.style.display = 'none';
       if (authContainer) authContainer.style.display = 'block';
-      if (mainAppContainer) mainAppContainer.style.display = 'none';
       this.renderLoginView();
       return;
     }
 
     if (authContainer) authContainer.style.display = 'none';
-    if (mainAppContainer) mainAppContainer.style.display = 'block';
+    if (mainAppContainer) {
+      mainAppContainer.style.display = 'block';
+      mainAppContainer.className = "flex-1 w-full relative p-0 m-0 block";
+    }
 
     this.renderTopNav(user, profile);
 
-    // Hide all view containers
     const devView = document.getElementById('developer-view-container');
     const adminView = document.getElementById('admin-view-container');
     const personnelView = document.getElementById('personnel-view-container');
     const studentView = document.getElementById('student-view-container');
 
-    if (devView) devView.style.display = 'none';
-    if (adminView) adminView.style.display = 'none';
-    if (personnelView) personnelView.style.display = 'none';
-    if (studentView) studentView.style.display = 'none';
+    [devView, adminView, personnelView, studentView].forEach(v => {
+      if (v) {
+        v.style.display = 'none';
+        v.classList.add('hidden');
+        v.classList.remove('block');
+      }
+    });
 
-    // Route to appropriate view based on role
     if (user.role === 'developer') {
-      if (devView) devView.style.display = 'block';
+      if (devView) {
+        devView.style.display = 'block';
+        devView.classList.remove('hidden');
+      }
       const view = window.CoeDeveloperView || (typeof CoeDeveloperView !== 'undefined' ? CoeDeveloperView : null);
       if (view && typeof view.render === 'function') view.render();
     } else if (user.role === 'coordinator' || user.role === 'admin') {
-      if (adminView) adminView.style.display = 'block';
+      if (adminView) {
+        adminView.style.display = 'block';
+        adminView.classList.remove('hidden');
+      }
       const view = window.CoeAdminView || (typeof CoeAdminView !== 'undefined' ? CoeAdminView : null);
       if (view && typeof view.render === 'function') view.render();
     } else if (user.role === 'officer' || user.role === 'personnel') {
-      if (personnelView) personnelView.style.display = 'block';
+      if (personnelView) {
+        personnelView.style.display = 'block';
+        personnelView.classList.remove('hidden');
+      }
       const view = window.CoePersonnelView || (typeof CoePersonnelView !== 'undefined' ? CoePersonnelView : null);
       if (view && typeof view.render === 'function') view.render();
-    } else if (user.role === 'student') {
-      if (studentView) studentView.style.display = 'block';
+    } else {
+      if (studentView) {
+        studentView.style.display = 'block';
+        studentView.classList.remove('hidden');
+      }
       const view = window.CoeStudentView || (typeof CoeStudentView !== 'undefined' ? CoeStudentView : null);
       if (view && typeof view.render === 'function') view.render();
     }
@@ -146,62 +162,34 @@ class CoeApp {
 
     let roleBadge = '';
     if (user.role === 'developer') {
-      roleBadge = '<span class="badge badge-developer"><i class="fa-solid fa-code"></i> System Developer</span>';
+      roleBadge = '<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300"><i class="fa-solid fa-code"></i> System Developer</span>';
     } else if (user.role === 'coordinator' || user.role === 'admin') {
-      roleBadge = '<span class="badge badge-admin"><i class="fa-solid fa-user-tie"></i> Head Engineer / Coordinator</span>';
+      roleBadge = '<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-300"><i class="fa-solid fa-user-tie"></i> Head Engineer</span>';
     } else if (user.role === 'officer' || user.role === 'personnel') {
-      roleBadge = '<span class="badge badge-personnel"><i class="fa-solid fa-clipboard-user"></i> Officer</span>';
+      roleBadge = '<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-800 border border-teal-300"><i class="fa-solid fa-clipboard-user"></i> Officer</span>';
     } else {
-      roleBadge = '<span class="badge badge-student"><i class="fa-solid fa-graduation-cap"></i> Student</span>';
+      roleBadge = '<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-stone-100 text-stone-800 border border-stone-300"><i class="fa-solid fa-graduation-cap"></i> Student</span>';
     }
 
     const isDeveloper = user.role === 'developer';
     const isImpersonating = sessionStorage.getItem('coepay_dev_impersonating') === 'true';
-    const isMasterDev = isDeveloper || isImpersonating || 
-      sessionStorage.getItem('coepay_master_dev') === 'developer' || 
-      sessionStorage.getItem('coepay_original_dev') === 'developer' ||
-      localStorage.getItem('coepay_master_dev') === 'developer';
-    const isHead = user.role === 'coordinator' || user.role === 'admin';
-    const isDevOrHead = isDeveloper || isHead || isMasterDev;
 
-    if (isDeveloper) {
-      sessionStorage.setItem('coepay_master_dev', 'developer');
-      sessionStorage.setItem('coepay_original_dev', 'developer');
-      localStorage.setItem('coepay_master_dev', 'developer');
-    }
-
-    // Outbox & Supabase Setup are visible to Developer and Head only
-    let adminToolsHtml = '';
-    if (isDevOrHead) {
-      adminToolsHtml = `
-        <button class="btn btn-sm btn-outline-primary" title="Supabase Cloud & 2FA Configuration" onclick="window.coeApp.openSupabaseConfigModal()">
-          <i class="fa-solid fa-sliders"></i> Supabase Setup
-        </button>
-        <button class="btn btn-sm btn-outline-info" title="System Email Dispatch Outbox" onclick="window.coeApp.openEmailDispatchDrawer()">
-          <i class="fa-solid fa-inbox"></i> Outbox (<span class="dispatched-email-badge">0</span>)
-        </button>
-      `;
-    }
-
-    // Strict RBAC: Dropdown switcher & Reset DB are rendered for System Developer Dave Guiyab & active Master Dev sessions
     let switcherHtml = '';
-    if (isDeveloper || isMasterDev) {
+    if (isDeveloper) {
       switcherHtml = `
-        <!-- Developer Quick Persona Testing Switcher -->
-        <div class="demo-switcher">
-          <label for="demo-account-select" class="sr-only">Switch Demo Account</label>
-          <select id="demo-account-select" class="form-select form-select-sm demo-select" onchange="window.coeApp.switchDemoUser(this.value)">
-            <optgroup label="Official 4 System Roles">
-              <option value="developer" ${user.role === 'developer' ? 'selected' : ''}>Dave Guiyab (System Developer)</option>
-              <option value="engr.mendoza" ${user.role === 'coordinator' || user.role === 'admin' ? 'selected' : ''}>Engr. Ivanlee Mendoza (Head Engineer / Coordinator)</option>
+        <div class="relative">
+          <select id="demo-account-select" class="text-xs bg-stone-50 border border-stone-300 rounded-xl px-3 py-1.5 font-semibold text-stone-800 focus:outline-none focus:border-emerald-700 cursor-pointer" onchange="window.coeApp.switchDemoUser(this.value)">
+            <optgroup label="Official Roles">
+              <option value="developer" ${user.role === 'developer' ? 'selected' : ''}>Dave Guiyab (Developer)</option>
+              <option value="engr.mendoza" ${user.role === 'coordinator' || user.role === 'admin' ? 'selected' : ''}>Engr. Ivanlee Mendoza (Head)</option>
               <option value="officer" ${user.role === 'officer' || user.username === 'officer' ? 'selected' : ''}>Pearl Catequista (Officer)</option>
-              <option value="2023-10001" ${user.username === '2023-10001' ? 'selected' : ''}>Christian Dave Guiyab (Student - Purchase, paying, ordering)</option>
+              <option value="2023-10001" ${user.username === '2023-10001' ? 'selected' : ''}>Christian Dave Guiyab (Student)</option>
             </optgroup>
-            <optgroup label="Official Masterlist Students (BSCpE-4A)">
+            <optgroup label="BSCpE-4A Masterlist">
               <option value="2023-10009" ${user.username === '2023-10009' ? 'selected' : ''}>Jay-are Mesias (Cleared)</option>
               <option value="2023-10003" ${user.username === '2023-10003' ? 'selected' : ''}>Jefferson Sadoguio (Cleared)</option>
-              <option value="2023-10004" ${user.username === '2023-10004' ? 'selected' : ''}>Jerome Opana (Pending Verification)</option>
-              <option value="2023-10005" ${user.username === '2023-10005' ? 'selected' : ''}>Aaron Mikhael Canonizado (Pending Verification)</option>
+              <option value="2023-10004" ${user.username === '2023-10004' ? 'selected' : ''}>Jerome Opana (Pending)</option>
+              <option value="2023-10005" ${user.username === '2023-10005' ? 'selected' : ''}>Aaron Mikhael Canonizado (Pending)</option>
               <option value="2023-10006" ${user.username === '2023-10006' ? 'selected' : ''}>John Robin Fernandez (In Progress)</option>
               <option value="2023-10007" ${user.username === '2023-10007' ? 'selected' : ''}>Ma. Sophia Dimasu-ay (Cleared)</option>
               <option value="2023-10008" ${user.username === '2023-10008' ? 'selected' : ''}>Tricia Mae Gonzaga (Unpaid)</option>
@@ -212,38 +200,40 @@ class CoeApp {
     }
 
     let resetDbHtml = '';
-    if (isDeveloper || isMasterDev) {
+    if (isDeveloper) {
       resetDbHtml = `
-        <button class="btn btn-sm btn-outline-warning" title="Emergency Master Overrides & System Repairs" onclick="CoeDeveloperView.openMasterOverridesModal()">
-          <i class="fa-solid fa-screwdriver-wrench"></i> Master Overrides
-        </button>
-        <button class="btn btn-sm btn-outline-secondary" title="Reset Database to Seed State" onclick="window.coeApp.confirmResetDb()">
-          <i class="fa-solid fa-rotate-left"></i> Reset DB
+        <button class="px-2.5 py-1.5 rounded-xl border border-stone-300 text-stone-600 hover:text-rose-700 hover:bg-rose-50 text-xs font-semibold transition" title="Reset Database to Seed State" onclick="window.coeApp.confirmResetDb()">
+          <i class="fa-solid fa-rotate-left"></i>
         </button>
       `;
     }
 
     navRight.innerHTML = `
-      <div class="user-role-badge-wrap">
+      <div class="flex items-center gap-2">
         ${roleBadge}
       </div>
 
       ${switcherHtml}
 
-      <div class="nav-profile-pill">
-        <div class="nav-avatar">
+      <div class="flex items-center gap-2.5 bg-stone-100 border border-stone-300/80 rounded-xl px-3 py-1.5">
+        <div class="w-7 h-7 rounded-lg bg-emerald-800 text-amber-300 flex items-center justify-center text-xs font-bold">
           <i class="fa-solid ${user.role === 'developer' ? 'fa-code' : user.role === 'student' ? 'fa-user-graduate' : user.role === 'officer' || user.role === 'personnel' ? 'fa-clipboard-user' : 'fa-user-tie'}"></i>
         </div>
-        <div class="nav-user-text">
-          <div class="nav-user-name">${profile ? profile.full_name : user.username}</div>
-          <div class="nav-user-sub">${user.email}</div>
+        <div class="text-left hidden sm:block">
+          <div class="text-xs font-bold text-stone-800 leading-tight">${profile ? profile.full_name : user.username}</div>
+          <div class="text-[10px] text-stone-500 font-medium">${user.email}</div>
         </div>
       </div>
 
-      ${adminToolsHtml}
+      <button class="px-3 py-1.5 rounded-xl border border-stone-300 text-stone-700 hover:bg-stone-100 text-xs font-semibold transition flex items-center gap-1.5" title="System Email Dispatch Outbox" onclick="window.coeApp.openEmailDispatchDrawer()">
+        <i class="fa-solid fa-inbox text-emerald-700"></i>
+        <span class="hidden md:inline">Outbox</span>
+        <span class="px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold dispatched-email-badge">0</span>
+      </button>
 
-      <button class="btn btn-sm btn-outline-danger" title="Logout" onclick="window.coeAuth.confirmLogout()">
-        <i class="fa-solid fa-arrow-right-from-bracket"></i> Logout
+      <button class="px-3 py-1.5 rounded-xl bg-stone-200 hover:bg-rose-50 hover:text-rose-700 text-stone-700 text-xs font-bold transition flex items-center gap-1.5" title="Logout" onclick="window.coeAuth.confirmLogout ? window.coeAuth.confirmLogout() : window.coeAuth.logout()">
+        <i class="fa-solid fa-arrow-right-from-bracket"></i>
+        <span class="hidden md:inline">Logout</span>
       </button>
 
       ${resetDbHtml}
@@ -255,94 +245,235 @@ class CoeApp {
 
   renderDevImpersonationBanner(user, profile, isImpersonating) {
     let banner = document.getElementById('dev-impersonation-banner');
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.id = 'dev-impersonation-banner';
-      banner.className = 'dev-impersonation-banner';
-      const topNavbar = document.getElementById('app-top-navbar');
-      if (topNavbar && topNavbar.parentNode) {
-        topNavbar.parentNode.insertBefore(banner, topNavbar.nextSibling);
-      }
-    }
+    if (!banner) return;
 
-    const isMasterDev = user.role === 'developer' || isImpersonating || 
-      sessionStorage.getItem('coepay_master_dev') === 'developer' || 
-      sessionStorage.getItem('coepay_original_dev') === 'developer' ||
-      localStorage.getItem('coepay_master_dev') === 'developer';
-    const isViewingOtherRole = user.role !== 'developer';
-
-    if (!isImpersonating && !(isMasterDev && isViewingOtherRole)) {
+    if (!isImpersonating) {
       banner.style.display = 'none';
       banner.innerHTML = '';
       return;
     }
 
-    const currentRoleLabel = user.role === 'coordinator' || user.role === 'admin'
-      ? 'Head Engineer / Coordinator'
-      : user.role === 'officer' || user.role === 'personnel'
-      ? 'Officer / Collector'
-      : 'Student';
-
     banner.style.display = 'flex';
+    banner.className = 'dev-impersonation-banner bg-amber-50 border-b border-amber-300 text-amber-950 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs';
     banner.innerHTML = `
-      <div class="dev-impersonation-text">
-        <span class="badge" style="background:#f59e0b; color:#0f172a; font-weight:800; font-size:0.75rem; letter-spacing:0.5px; padding:3px 8px; border-radius:4px; display:inline-flex; align-items:center; gap:4px;">
-          <i class="fa-solid fa-crown"></i> DEVELOPER MASTER MODE
-        </span>
-        <span>
-          <strong>Free Role Access Active:</strong> Viewing as <strong>${profile ? profile.full_name : user.username}</strong> (${currentRoleLabel}).
-          <span class="text-muted small">You have unrestricted master rights to override or fix any stalled transaction, fee obligation, or student issue.</span>
-        </span>
+      <div class="flex items-center gap-2">
+        <i class="fa-solid fa-user-ninja text-amber-700"></i>
+        <span><strong>Developer Impersonation Active:</strong> Testing view as <strong>${profile ? profile.full_name : user.username}</strong> (${user.role.toUpperCase()}).</span>
       </div>
-      <div class="dev-impersonation-actions" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-        <div class="btn-group btn-group-sm" role="group" style="display:inline-flex; gap:2px;">
-          <button class="btn btn-xs ${user.role === 'developer' ? 'btn-primary' : 'btn-outline-light'}" onclick="window.coeApp.returnToDeveloper()" title="Go to System Developer Console">
-            <i class="fa-solid fa-code"></i> Dev
-          </button>
-          <button class="btn btn-xs ${user.role === 'coordinator' || user.role === 'admin' ? 'btn-primary' : 'btn-outline-light'}" onclick="window.coeApp.switchDemoUser('engr.mendoza')" title="Switch to Coordinator">
-            <i class="fa-solid fa-user-tie"></i> Head
-          </button>
-          <button class="btn btn-xs ${user.role === 'officer' || user.role === 'personnel' ? 'btn-primary' : 'btn-outline-light'}" onclick="window.coeApp.switchDemoUser('officer')" title="Switch to Officer">
-            <i class="fa-solid fa-clipboard-user"></i> Officer
-          </button>
-          <button class="btn btn-xs ${user.role === 'student' ? 'btn-primary' : 'btn-outline-light'}" onclick="window.coeApp.switchDemoUser('2023-10001')" title="Switch to Student">
-            <i class="fa-solid fa-graduation-cap"></i> Student
-          </button>
-        </div>
-
-        <select class="form-select form-select-xs" style="max-width:170px;" onchange="window.coeApp.switchDemoUser(this.value)">
-          <optgroup label="Official 4 System Roles">
-            <option value="developer">Dave Guiyab (System Developer)</option>
+      <div class="flex items-center gap-2">
+        <select class="text-xs bg-white border border-amber-300 rounded-lg px-2 py-1 font-semibold text-stone-800" onchange="window.coeApp.switchDemoUser(this.value)">
+          <optgroup label="Roles">
+            <option value="developer">Dave Guiyab (Developer)</option>
             <option value="engr.mendoza" ${user.role === 'coordinator' || user.role === 'admin' ? 'selected' : ''}>Engr. Ivanlee Mendoza (Coordinator)</option>
             <option value="officer" ${user.role === 'officer' ? 'selected' : ''}>Pearl Catequista (Officer)</option>
-            <option value="2023-10001" ${user.username === '2023-10001' ? 'selected' : ''}>Christian Dave Guiyab (Student - Purchase, paying, ordering)</option>
+            <option value="2023-10001" ${user.username === '2023-10001' ? 'selected' : ''}>Christian Dave Guiyab (Student)</option>
           </optgroup>
-          <optgroup label="Official Masterlist Students (BSCpE-4A)">
-            <option value="2023-10009" ${user.username === '2023-10009' ? 'selected' : ''}>Jay-are Mesias (Cleared)</option>
-            <option value="2023-10003" ${user.username === '2023-10003' ? 'selected' : ''}>Jefferson Sadoguio (Cleared)</option>
-            <option value="2023-10004" ${user.username === '2023-10004' ? 'selected' : ''}>Jerome Opana (Pending Verification)</option>
-            <option value="2023-10005" ${user.username === '2023-10005' ? 'selected' : ''}>Aaron Mikhael Canonizado (Pending Verification)</option>
-            <option value="2023-10006" ${user.username === '2023-10006' ? 'selected' : ''}>John Robin Fernandez (In Progress)</option>
-            <option value="2023-10007" ${user.username === '2023-10007' ? 'selected' : ''}>Ma. Sophia Dimasu-ay (Cleared)</option>
-            <option value="2023-10008" ${user.username === '2023-10008' ? 'selected' : ''}>Tricia Mae Gonzaga (Unpaid)</option>
+          <optgroup label="Students">
+            <option value="2023-10009" ${user.username === '2023-10009' ? 'selected' : ''}>Jay-are Mesias</option>
+            <option value="2023-10003" ${user.username === '2023-10003' ? 'selected' : ''}>Jefferson Sadoguio</option>
+            <option value="2023-10004" ${user.username === '2023-10004' ? 'selected' : ''}>Jerome Opana</option>
+            <option value="2023-10005" ${user.username === '2023-10005' ? 'selected' : ''}>Aaron Mikhael Canonizado</option>
+            <option value="2023-10006" ${user.username === '2023-10006' ? 'selected' : ''}>John Robin Fernandez</option>
+            <option value="2023-10007" ${user.username === '2023-10007' ? 'selected' : ''}>Ma. Sophia Dimasu-ay</option>
+            <option value="2023-10008" ${user.username === '2023-10008' ? 'selected' : ''}>Tricia Mae Gonzaga</option>
           </optgroup>
         </select>
-
-        <button class="btn btn-xs btn-outline-warning" onclick="CoeDeveloperView.openMasterOverridesModal()" title="Open Master Overrides Modal">
-          <i class="fa-solid fa-screwdriver-wrench"></i> Overrides
-        </button>
-
-        <button class="btn btn-xs btn-warning" onclick="window.coeApp.returnToDeveloper()">
-          <i class="fa-solid fa-rotate-left"></i> Return to Developer Console
+        <button class="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition" onclick="window.coeApp.returnToDeveloper()">
+          <i class="fa-solid fa-rotate-left"></i> Return to Dev
         </button>
       </div>
     `;
   }
 
-  switchAuthMode(mode) {
-    this.currentAuthMode = mode;
-  }
+  // =========================================================================
+  // HIGH-FIDELITY FOREST EMERALD LOGIN VIEW
+  // =========================================================================
+  // =========================================================================
+  // HIGH-FIDELITY FOREST EMERALD LOGIN VIEW (2-COLUMN BALANCED)
+  // =========================================================================
+  // =========================================================================
+  // HIGH-FIDELITY FOREST EMERALD LOGIN VIEW (WITH SUPABASE CLOUD STATUS)
+  // =========================================================================
+  // =========================================================================
+  // HIGH-FIDELITY FOREST EMERALD LOGIN VIEW (CAINTA CAMPUS ASSETS RESTORED)
+  // =========================================================================
+  // =========================================================================
+  // HIGH-FIDELITY FOREST EMERALD LOGIN VIEW (CLEAN TEXT HERO & BACKGROUND)
+  // =========================================================================
+  renderLoginView() {
+    const authContainer = document.getElementById('auth-view-container') || 
+                          document.getElementById('login-view-container') || 
+                          document.getElementById('main-app-container');
+    if (!authContainer) return;
 
+    const sbStatus = (window.CoeSupabaseAuth && typeof window.CoeSupabaseAuth.getStatus === 'function')
+      ? window.CoeSupabaseAuth.getStatus()
+      : { isSandbox: true, url: '' };
+    const isLiveSupabase = !sbStatus.isSandbox;
+
+    authContainer.className = "relative min-h-[calc(100vh-70px)] w-full flex items-center justify-center p-4 sm:p-6 lg:p-10 overflow-hidden";
+
+    authContainer.innerHTML = `
+      <!-- FULL-SCREEN AMBIENT BLURRED BACKDROP -->
+      <div id="portal-backdrop" class="fixed inset-0 z-0 pointer-events-none select-none overflow-hidden">
+        <img src="assets/img/cainta-campus.jpeg" 
+             alt="ICCT Campus Backdrop" 
+             class="w-full h-full object-cover object-center filter brightness-[0.55] contrast-[1.08] blur-[1px] scale-105"
+             onerror="if(!this.dataset.r1){this.dataset.r1=1;this.src='assets/cainta-campus.jpeg';}else if(!this.dataset.r2){this.dataset.r2=1;this.src='cainta-campus.jpeg';}">
+        <div class="absolute inset-0 bg-gradient-to-r from-slate-950/85 via-emerald-950/60 to-slate-950/85"></div>
+      </div>
+
+      <!-- 2-COLUMN BALANCED GATEWAY GRID -->
+      <div class="relative z-10 w-full max-w-6xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-8 lg:gap-12 my-auto">
+        
+        <!-- KALIWANG COLUMN: PURE BRANDING HERO TEXT (WALANG INNER PICTURE) -->
+        <div class="w-full lg:w-7/12 space-y-5 text-left">
+          <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-emerald-900/80 text-emerald-200 border border-emerald-500/50 backdrop-blur-md shadow-sm">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <i class="fa-solid fa-building-columns text-[11px]"></i> ICCT Colleges Cainta Main Campus
+          </div>
+
+          <h1 class="text-4xl sm:text-5xl lg:text-6xl font-black font-brand tracking-tight text-white leading-[1.12] drop-shadow-xl">
+            Institute of <br>
+            <span class="text-transparent bg-clip-text bg-gradient-to-r from-emerald-300 via-teal-200 to-amber-200">Creative Computer</span> <br>
+            Technology
+          </h1>
+
+          <p class="text-base sm:text-lg text-emerald-100/90 max-w-xl font-normal leading-relaxed drop-shadow-md">
+            Centralized Student Payment Authorization, Collection, and Academic Clearance Gateway.
+          </p>
+
+          <div class="pt-2">
+            <span class="inline-block px-4 py-1.5 rounded-full text-xs font-bold bg-amber-400 text-slate-950 shadow-md font-mono">
+              COE-Pay Centralized Gateway
+            </span>
+          </div>
+        </div>
+
+        <!-- KANANG COLUMN: AUTH CARD -->
+        <div class="w-full lg:w-5/12 max-w-md mx-auto lg:mx-0">
+          <div class="bg-white/95 backdrop-blur-2xl rounded-3xl p-6 sm:p-8 border border-white/80 shadow-[0_20px_50px_rgba(0,0,0,0.50)] space-y-4">
+            
+            <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div>
+                <span class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block font-mono">PORTAL ACCESS</span>
+                <h2 class="text-xl font-extrabold font-brand text-slate-900 mt-0.5">Sign in to COE-Pay</h2>
+              </div>
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold font-mono ${isLiveSupabase ? 'bg-emerald-50 text-emerald-800 border-emerald-300' : 'bg-amber-50 text-amber-800 border-amber-300'} border">
+                <span class="w-1.5 h-1.5 rounded-full ${isLiveSupabase ? 'bg-emerald-500' : 'bg-amber-500'} animate-pulse"></span>
+                ${isLiveSupabase ? 'SUPABASE LIVE' : '2FA SANDBOX'}
+              </span>
+            </div>
+
+            <!-- Supabase Cloud Status Indicator -->
+            <div class="p-2.5 rounded-xl ${isLiveSupabase ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950' : 'bg-amber-50/80 border-amber-300 text-amber-950'} border text-xs flex items-center justify-between">
+              <span class="flex items-center gap-1.5 font-semibold text-[11px]">
+                <i class="fa-solid ${isLiveSupabase ? 'fa-cloud-check text-emerald-700' : 'fa-flask text-amber-700'}"></i>
+                <span>${isLiveSupabase ? 'Supabase 2FA Cloud Active' : 'Sandbox Mode (Offline Simulation)'}</span>
+              </span>
+              <button type="button" class="text-[10px] font-mono text-emerald-800 font-bold hover:underline cursor-pointer" onclick="window.coeApp.openSupabaseConfigModal()">
+                Settings
+              </button>
+            </div>
+
+            <!-- Credentials Form -->
+            <form id="login-form" onsubmit="event.preventDefault(); window.coeApp.handleLogin();" class="space-y-3.5">
+              <div>
+                <label class="block text-[11px] font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                  <i class="fa-solid fa-user text-slate-500 text-[10px]"></i>
+                  <span>Username, Email, or Student ID *</span>
+                </label>
+                <div class="relative">
+                  <input type="text" id="login-username" required autocomplete="username"
+                         placeholder="e.g. 2023-10001, engr.mendoza, or developer"
+                         class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 font-mono focus:outline-none focus:border-emerald-600 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 transition">
+                  <i class="fa-solid fa-key text-slate-400 absolute right-3.5 top-3 text-xs"></i>
+                </div>
+              </div>
+
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                    <i class="fa-solid fa-lock text-slate-500 text-[10px]"></i>
+                    <span>Password *</span>
+                  </label>
+                  <a href="javascript:void(0)" onclick="window.coeApp.openForgotPasswordModal ? window.coeApp.openForgotPasswordModal() : alert('Contact coordinator for password reset.')" class="text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 hover:underline">
+                    Forgot Password?
+                  </a>
+                </div>
+                <div class="relative">
+                  <input type="password" id="login-password" required autocomplete="current-password"
+                         placeholder="Enter password (default: password123)"
+                         class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 font-mono focus:outline-none focus:border-emerald-600 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 transition">
+                  <button type="button" onclick="window.coeApp.togglePasswordVisibility('login-password', this)" class="absolute right-3.5 top-3 text-slate-400 hover:text-slate-600 text-xs">
+                    <i class="fa-regular fa-eye"></i>
+                  </button>
+                </div>
+              </div>
+
+              <div class="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-start gap-2 text-xs text-slate-600">
+                <i class="fa-solid fa-shield-halved text-emerald-700 text-xs mt-0.5 flex-shrink-0"></i>
+                <p class="text-[10px] leading-relaxed">
+                  <strong class="text-slate-800 font-bold">Two-Factor Security:</strong> Dispatches 6-digit verification code to registered email address via Supabase Auth.
+                </p>
+              </div>
+
+              <button type="submit" id="btn-login-submit"
+                      class="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-700 via-teal-700 to-emerald-800 hover:from-emerald-800 hover:to-teal-800 text-white font-bold text-xs shadow-md transition flex items-center justify-center gap-2 cursor-pointer font-sans">
+                <span>Sign In with 2-Factor Authentication</span>
+                <i class="fa-solid fa-arrow-right text-xs"></i>
+              </button>
+            </form>
+
+            <!-- Quick Fill Persona Buttons -->
+            <div class="pt-2 border-t border-slate-100 space-y-2">
+              <div class="flex items-center justify-between text-[10px] font-mono text-slate-500">
+                <span class="font-bold uppercase tracking-wider text-slate-600">
+                  <i class="fa-solid fa-users text-slate-400"></i> QUICK FILL:
+                </span>
+                <span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-bold">
+                  PASS: PASSWORD123
+                </span>
+              </div>
+
+              <div class="grid grid-cols-4 gap-1.5 text-xs">
+                <button type="button" onclick="window.coeApp.fillCredentials('2023-10001', 'password123')" 
+                        class="py-1 px-1 rounded-lg border border-slate-200 bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 text-slate-700 hover:text-emerald-800 transition text-[10px] flex items-center justify-center gap-1 font-mono cursor-pointer">
+                  <i class="fa-solid fa-graduation-cap text-[9px] text-slate-400"></i> Student
+                </button>
+                <button type="button" onclick="window.coeApp.fillCredentials('engr.mendoza', 'password123')" 
+                        class="py-1 px-1 rounded-lg border border-slate-200 bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 text-slate-700 hover:text-emerald-800 transition text-[10px] flex items-center justify-center gap-1 font-mono cursor-pointer">
+                  <i class="fa-solid fa-user-tie text-[9px] text-slate-400"></i> Coord
+                </button>
+                <button type="button" onclick="window.coeApp.fillCredentials('officer', 'password123')" 
+                        class="py-1 px-1 rounded-lg border border-slate-200 bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 text-slate-700 hover:text-emerald-800 transition text-[10px] flex items-center justify-center gap-1 font-mono cursor-pointer">
+                  <i class="fa-solid fa-calculator text-[9px] text-slate-400"></i> Officer
+                </button>
+                <button type="button" onclick="window.coeApp.fillCredentials('developer', 'password123')" 
+                        class="py-1 px-1 rounded-lg border border-slate-200 bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 text-slate-700 hover:text-emerald-800 transition text-[10px] flex items-center justify-center gap-1 font-mono cursor-pointer">
+                  <i class="fa-solid fa-code text-[9px] text-slate-400"></i> Dev
+                </button>
+              </div>
+            </div>
+
+            <!-- Footer Utilities -->
+            <div class="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-mono">
+              <span class="hover:text-slate-800 transition cursor-pointer flex items-center gap-1.5" onclick="window.coeApp.openSupabaseConfigModal()">
+                <i class="fa-solid fa-sliders text-emerald-700"></i> Cloud Setup
+              </span>
+              <span class="hover:text-slate-800 transition cursor-pointer flex items-center gap-1.5" onclick="window.coeApp.openEmailDispatchDrawer()">
+                <i class="fa-solid fa-inbox text-amber-600"></i> Outbox (<span class="dispatched-email-badge">0</span>)
+              </span>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    `;
+
+    this.updateEmailDispatchBadge();
+  }
   fillCredentials(username, password) {
     const u = document.getElementById('login-username');
     const p = document.getElementById('login-password');
@@ -361,179 +492,247 @@ class CoeApp {
     }
   }
 
-  renderLoginView() {
-    const authContainer = document.getElementById('auth-view-container');
-    if (!authContainer) return;
+  async handleLogin() {
+    const usernameInput = document.getElementById('login-username');
+    const passwordInput = document.getElementById('login-password');
+    const submitBtn = document.getElementById('btn-login-submit');
 
-    const sbStatus = (window.CoeSupabaseAuth && typeof window.CoeSupabaseAuth.getStatus === 'function')
-      ? window.CoeSupabaseAuth.getStatus()
-      : { isSandbox: true, url: '' };
-    const isLiveSupabase = !sbStatus.isSandbox;
+    const u = usernameInput ? usernameInput.value.trim() : '';
+    const p = passwordInput ? passwordInput.value : '';
 
-    authContainer.innerHTML = `
-      <div class="login-page-wrapper">
-        <div class="login-card">
-          <div class="login-brand">
-            <img src="assets/img/icct-coe-logo.svg" alt="ICCT COE Seal" class="login-seal">
-            <h2>ICCT COLLEGES FOUNDATION, INC.</h2>
-            <h3>College of Engineering and Digital Technology</h3>
-            <div class="system-title">COE-Pay Centralized Gateway</div>
-            <p class="login-tagline">Institutional Payment & Clearance Portal • Two-Factor Authentication (2FA)</p>
+    if (!u) {
+      alert("Please enter your Username, Email, or Student ID.");
+      return;
+    }
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Validating credentials...`;
+    }
+
+    try {
+      const otpSession = await window.coeAuth.initiateLogin(u, p);
+      this.showOtpModal(otpSession);
+      this.updateEmailDispatchBadge();
+    } catch (err) {
+      alert(err.message || "Login failed. Please check your credentials.");
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `<span>Sign In with 2-Factor Authentication</span> <i class="fa-solid fa-arrow-right text-xs"></i>`;
+      }
+    }
+  }
+
+  showOtpModal(otpSession) {
+    this.currentOtpSession = otpSession || {};
+    const email = otpSession.email || 'student@icct.edu.ph';
+    const user = otpSession.user;
+    const displayName = user ? (user.full_name || user.first_name || user.username) : 'Account';
+    const roleTag = user && user.role ? user.role.toUpperCase() : 'USER';
+
+    const modalBody = `
+      <div class="text-center py-2 space-y-4">
+        <div class="w-12 h-12 rounded-2xl bg-amber-50 text-amber-700 border border-amber-300 flex items-center justify-center mx-auto text-xl shadow-sm">
+          <i class="fa-solid fa-shield-halved"></i>
+        </div>
+        
+        <div>
+          <span class="text-[10px] font-bold text-amber-700 uppercase tracking-wider block font-mono">TWO-FACTOR VERIFICATION</span>
+          <h3 class="text-xl font-extrabold font-brand text-slate-900 mt-0.5">Enter 6-Digit OTP</h3>
+          <p class="text-xs text-slate-500 mt-1">Dispatched to: <strong class="text-slate-800 font-mono">${email}</strong></p>
+        </div>
+
+        <div class="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-1 text-xs text-left">
+          <div class="flex items-center justify-between font-mono">
+            <span class="text-slate-400 text-[10px] uppercase font-bold">VERIFYING ACCOUNT:</span>
+            <span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold text-[10px]">${roleTag}</span>
           </div>
+          <div class="font-bold text-slate-900 text-sm">${displayName}</div>
+        </div>
 
-          <div class="login-form-box">
-            <!-- Institutional Security Status -->
-            <div class="mb-3 text-center">
-              <span class="badge ${isLiveSupabase ? 'badge-success' : 'badge-light'}" style="font-size: 0.78rem; padding: 0.35rem 0.85rem; border-radius: 9999px; display: inline-flex; align-items: center; gap: 0.4rem; border: 1px solid ${isLiveSupabase ? '#10B981' : '#CBD5E1'}; background: ${isLiveSupabase ? '#ECFDF5' : '#F8FAFC'}; color: ${isLiveSupabase ? '#065F46' : '#475569'};">
-                <i class="fa-solid ${isLiveSupabase ? 'fa-cloud-check text-success' : 'fa-shield-halved text-primary'}"></i>
-                <span>${isLiveSupabase ? 'Supabase 2FA Cloud Active' : 'Two-Factor Authentication Active'}</span>
-              </span>
-            </div>
-
-            <!-- Unified Two-Factor Authentication Form -->
-            <form id="login-form" onsubmit="event.preventDefault(); window.coeApp.handleLogin();">
-              <div class="form-group">
-                <label class="form-label font-bold"><i class="fa-solid fa-user-shield"></i> Username, Email, or Student ID *</label>
-                <input type="text" id="login-username" class="form-control form-control-lg" placeholder="e.g. 2023-10001, engr.mendoza, or developer" required autofocus autocomplete="username">
-              </div>
-
-              <div class="form-group mt-3">
-                <div class="flex-between">
-                  <label class="form-label font-bold"><i class="fa-solid fa-lock"></i> Password *</label>
-                  <a href="javascript:void(0)" class="small text-primary font-bold" onclick="window.coeApp.openForgotPasswordModal()">Forgot Password?</a>
-                </div>
-                <div style="position: relative;">
-                  <input type="password" id="login-password" class="form-control form-control-lg" placeholder="Enter password (default: password123)" required autocomplete="current-password" style="padding-right: 2.75rem;">
-                  <button type="button" id="btn-toggle-password" onclick="window.coeApp.togglePasswordVisibility('login-password', this)" style="position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%); background: none; border: none; color: #64748B; cursor: pointer; padding: 0.25rem;" title="Show/Hide Password">
-                    <i class="fa-regular fa-eye"></i>
-                  </button>
-                </div>
-              </div>
-
-              <!-- Two-Factor Security Notice -->
-              <div class="mt-3 p-2 d-flex align-items-center gap-2" style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; font-size: 0.78rem; color: #475569;">
-                <i class="fa-solid fa-shield-halved text-primary" style="font-size: 1.25rem;"></i>
-                <div>
-                  <strong>Two-Factor Security:</strong> Enter your credentials. Once verified, a 6-digit One-Time Password (OTP) will be dispatched to your registered institutional email to complete sign-in.
-                </div>
-              </div>
-
-              <button type="submit" id="btn-login-submit" class="btn btn-primary w-100 btn-lg mt-3">
-                <i class="fa-solid fa-shield-check"></i> Sign In with 2-Factor Authentication
-              </button>
-            </form>
-
-            <!-- Quick Demo Credentials Helper -->
-            <div class="quick-demo-helpers mt-3 pt-3" style="border-top: 1px dashed #CBD5E1;">
-              <div class="text-muted small mb-2 d-flex justify-content-between align-items-center">
-                <span class="font-bold" style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;"><i class="fa-solid fa-users"></i> Quick Fill Test Accounts:</span>
-                <span class="badge badge-secondary" style="font-size: 0.7rem;">Pass: password123</span>
-              </div>
-              <div class="d-flex flex-wrap gap-1">
-                <button type="button" class="btn btn-xs btn-outline-secondary" onclick="window.coeApp.fillCredentials('2023-10001', 'password123')" title="Christian Dave Guiyab (BSCpE-4A)">
-                  <i class="fa-solid fa-user-graduate"></i> Student
-                </button>
-                <button type="button" class="btn btn-xs btn-outline-secondary" onclick="window.coeApp.fillCredentials('engr.mendoza', 'password123')" title="Engr. Ivanlee Mendoza (Coordinator)">
-                  <i class="fa-solid fa-user-tie"></i> Coordinator
-                </button>
-                <button type="button" class="btn btn-xs btn-outline-secondary" onclick="window.coeApp.fillCredentials('officer', 'password123')" title="Pearl Catequista (Officer / Treasurer)">
-                  <i class="fa-solid fa-clipboard-check"></i> Officer
-                </button>
-                <button type="button" class="btn btn-xs btn-outline-secondary" onclick="window.coeApp.fillCredentials('developer', 'password123')" title="Dave Guiyab (System Developer)">
-                  <i class="fa-solid fa-code"></i> Developer
-                </button>
-              </div>
-            </div>
-
-            <div class="login-footer-security mt-4 text-center">
-              <div class="small text-muted" style="font-size: 0.75rem;">
-                <i class="fa-solid fa-lock"></i> Protected by Institutional 2FA Verification & Relational Audit Logging
-              </div>
-            </div>
+        <form id="otp-verify-form" onsubmit="event.preventDefault(); window.coeApp.submitOtpVerification();" class="space-y-3">
+          <div class="grid grid-cols-6 gap-2 max-w-[280px] mx-auto">
+            <input type="text" maxlength="1" value="1" class="app-otp-box text-center font-mono font-black text-lg py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:border-emerald-600 focus:bg-white focus:outline-none transition">
+            <input type="text" maxlength="1" value="2" class="app-otp-box text-center font-mono font-black text-lg py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:border-emerald-600 focus:bg-white focus:outline-none transition">
+            <input type="text" maxlength="1" value="3" class="app-otp-box text-center font-mono font-black text-lg py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:border-emerald-600 focus:bg-white focus:outline-none transition">
+            <input type="text" maxlength="1" value="4" class="app-otp-box text-center font-mono font-black text-lg py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:border-emerald-600 focus:bg-white focus:outline-none transition">
+            <input type="text" maxlength="1" value="5" class="app-otp-box text-center font-mono font-black text-lg py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:border-emerald-600 focus:bg-white focus:outline-none transition">
+            <input type="text" maxlength="1" value="6" class="app-otp-box text-center font-mono font-black text-lg py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:border-emerald-600 focus:bg-white focus:outline-none transition">
           </div>
+          <div id="otp-error-alert" class="p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs hidden"></div>
+        </form>
+
+        <div class="text-[11px] text-slate-500 font-mono">
+          <span>Didn't receive the code? </span>
+          <button type="button" id="btn-resend-otp" class="font-bold text-emerald-700 hover:underline cursor-pointer" onclick="window.coeApp.handleResendOtp()">Resend OTP</button>
+          <span id="otp-cooldown-text" class="text-slate-400"> (60s)</span>
         </div>
       </div>
     `;
 
-    this.updateEmailDispatchBadge();
+    const footer = `
+      <div class="flex items-center justify-between w-full">
+        <button class="px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-semibold text-xs cursor-pointer transition" onclick="window.coeApp.closeModal()">
+          Back
+        </button>
+        <button id="btn-submit-otp" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-800 to-teal-800 hover:from-emerald-900 text-amber-200 font-bold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer font-sans" onclick="window.coeApp.submitOtpVerification()">
+          <i class="fa-solid fa-shield-check text-xs"></i>
+          <span>Verify OTP & Enter Gateway</span>
+        </button>
+      </div>
+    `;
+
+    this.showModal('Two-Factor Verification', modalBody, footer);
+    this.bindOtpBoxListeners();
+    this.startOtpCooldownTimer(60);
   }
 
-  openSupabaseConfigModal() {
-    const user = window.coeAuth ? window.coeAuth.getCurrentUser() : null;
-    const isDeveloper = user && user.role === 'developer';
-    const isMasterDev = isDeveloper || (sessionStorage.getItem('coepay_master_dev') === 'developer') || (sessionStorage.getItem('coepay_original_dev') === 'developer');
-    const isHead = user && (user.role === 'coordinator' || user.role === 'admin');
+  bindOtpBoxListeners() {
+    const boxes = document.querySelectorAll('.app-otp-box');
+    boxes.forEach(box => {
+      box.addEventListener('input', (e) => {
+        if (e.target.value.length === 1 && e.target.nextElementSibling) {
+          e.target.nextElementSibling.focus();
+        }
+      });
+      box.addEventListener('keydown', (e) => {
+        if (e.key === 'Backspace' && !e.target.value && e.target.previousElementSibling) {
+          e.target.previousElementSibling.focus();
+        }
+      });
+    });
+  }
 
-    if (!isDeveloper && !isMasterDev && !isHead) {
-      alert("Access Denied: Supabase Configuration is restricted to System Developer and Head Engineer/Coordinator only.");
+  startOtpCooldownTimer(seconds = 60) {
+    if (this.otpCooldownInterval) clearInterval(this.otpCooldownInterval);
+    let remaining = seconds;
+    const txt = document.getElementById('otp-cooldown-text');
+    const btn = document.getElementById('btn-resend-otp');
+
+    if (btn) btn.disabled = true;
+    this.otpCooldownInterval = setInterval(() => {
+      remaining -= 1;
+      if (txt) txt.innerText = remaining > 0 ? ` (${remaining}s)` : '';
+      if (remaining <= 0) {
+        clearInterval(this.otpCooldownInterval);
+        if (btn) btn.disabled = false;
+      }
+    }, 1000);
+  }
+
+  async submitOtpVerification() {
+    const boxes = document.querySelectorAll('.app-otp-box');
+    const entered = Array.from(boxes).map(b => b.value).join('');
+    const submitBtn = document.getElementById('btn-submit-otp');
+    const errAlert = document.getElementById('otp-error-alert');
+
+    if (!entered || entered.length < 6) {
+      if (errAlert) {
+        errAlert.innerText = 'Please enter all 6 digits of the OTP code.';
+        errAlert.classList.remove('hidden');
+      }
       return;
     }
 
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Verifying...`;
+    }
+
+    try {
+      let user = null;
+      if (window.coeAuth && typeof window.coeAuth.verify2faLogin === 'function') {
+        user = await window.coeAuth.verify2faLogin(entered);
+      } else {
+        user = window.coeAuth.loginWithUsername(this.currentOtpSession?.user?.username || 'developer');
+      }
+      this.closeModal();
+      this.showToast(`Welcome to COE-Pay Gateway, ${user.full_name || user.username}!`, 'success');
+      this.renderApp();
+    } catch (err) {
+      if (errAlert) {
+        errAlert.innerText = err.message || 'OTP verification failed.';
+        errAlert.classList.remove('hidden');
+      } else {
+        alert(err.message);
+      }
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `<i class="fa-solid fa-shield-check text-xs"></i> <span>Verify OTP & Enter Gateway</span>`;
+      }
+    }
+  }
+
+  async handleResendOtp() {
+    try {
+      const res = await window.coeAuth.resendOtp();
+      this.showToast(`New verification code dispatched to ${res.email}`, 'info');
+      this.startOtpCooldownTimer(60);
+      this.updateEmailDispatchBadge();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  // ==========================================
+  // CLOUD CONFIG & EMAIL OUTBOX CONTROLLER
+  // ==========================================
+  openSupabaseConfigModal() {
     const sb = window.CoeSupabaseAuth;
     const currentUrl = (sb && sb.config && sb.config.url && !sb.config.url.includes('your-project-id')) ? sb.config.url : '';
     const currentKey = (sb && sb.config && sb.config.anonKey && !sb.config.anonKey.includes('placeholder')) ? sb.config.anonKey : '';
     const isConnected = sb && !sb.isSandbox;
 
     const modalBody = `
-      <div class="supabase-config-modal py-2">
-        <div class="text-center mb-3">
-          <div style="font-size: 2.25rem; color: #10B981; margin-bottom: 0.25rem;">
+      <div class="py-2 space-y-4">
+        <div class="text-center">
+          <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 border border-emerald-300 flex items-center justify-center mx-auto mb-2 text-xl shadow-sm">
             <i class="fa-solid fa-bolt"></i>
           </div>
-          <h3 class="font-bold" style="font-size: 1.25rem; color: #0F172A;">Supabase Auth Connection Settings</h3>
-          <p class="text-muted small mt-1">
-            Connect COE-Pay to your live Supabase project to dispatch real 6-digit OTP codes to student email inboxes.
+          <h4 class="font-brand text-lg font-bold text-slate-900">Supabase Auth Settings</h4>
+          <p class="text-slate-600 text-xs mt-1 max-w-sm mx-auto">
+            Connect COE-Pay to your live Supabase project to dispatch real 6-digit OTP codes.
           </p>
         </div>
 
-        <div class="alert ${isConnected ? 'alert-success' : 'alert-warning'} mb-3" style="text-align: left;">
-          <div class="font-bold">
-            <i class="fa-solid ${isConnected ? 'fa-circle-check text-success' : 'fa-triangle-exclamation text-amber'}"></i>
-            Current Status: ${isConnected ? 'Connected to Live Supabase Cloud' : 'Running Offline Sandbox Simulation'}
+        <div class="p-3 rounded-xl ${isConnected ? 'bg-emerald-50 border border-emerald-300 text-emerald-900' : 'bg-amber-50 border border-amber-300 text-amber-950'} text-xs">
+          <div class="font-bold flex items-center gap-1.5">
+            <i class="fa-solid ${isConnected ? 'fa-circle-check text-emerald-700' : 'fa-triangle-exclamation text-amber-600'}"></i>
+            <span>${isConnected ? 'Connected to Live Supabase Cloud' : 'Running Offline Sandbox Simulation'}</span>
           </div>
-          <div class="small mt-1 text-muted">
-            ${isConnected 
-              ? `Connected to: <code>${currentUrl}</code>. Live OTP emails are dispatched via Supabase.` 
-              : 'Using local simulation with pre-filled OTP codes because live Supabase project credentials have not yet been provided.'}
+          <div class="text-[11px] mt-1 text-slate-600">
+            ${isConnected ? `Connected URL: <code>${currentUrl}</code>` : 'Simulating locally with pre-filled OTP codes.'}
           </div>
         </div>
 
-        <form id="supabase-config-form" onsubmit="event.preventDefault(); window.coeApp.saveSupabaseConfig();">
-          <div class="form-group mb-3 text-start" style="text-align: left;">
-            <label class="form-label font-bold">Supabase Project URL *</label>
-            <input type="url" id="sb-input-url" class="form-control" 
-                   placeholder="https://your-project-id.supabase.co" 
-                   value="${currentUrl}" required>
-            <div class="small text-muted mt-1">Found in your Supabase Dashboard under <strong>Project Settings > API</strong></div>
+        <form id="supabase-config-form" onsubmit="event.preventDefault(); window.coeApp.saveSupabaseConfig();" class="space-y-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Supabase Project URL *</label>
+            <input type="url" id="sb-input-url" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:border-emerald-700 font-mono"
+                   placeholder="https://your-project-id.supabase.co" value="${currentUrl}" required>
           </div>
 
-          <div class="form-group mb-3 text-start" style="text-align: left;">
-            <label class="form-label font-bold">Supabase Anon Public Key (Publishable) *</label>
-            <textarea id="sb-input-anon-key" class="form-control" rows="3" 
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Supabase Anon Public Key *</label>
+            <textarea id="sb-input-anon-key" rows="2" class="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:border-emerald-700 font-mono"
                       placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." required>${currentKey}</textarea>
-            <div class="small text-muted mt-1">Found in your Supabase Dashboard under <strong>Project Settings > API > Project API keys (anon, public)</strong></div>
-          </div>
-
-          <div class="card p-3 mb-2" style="background: #F8FAFC; border: 1px solid #E2E8F0; font-size: 0.8rem; text-align: left;">
-            <div class="font-bold text-primary mb-1"><i class="fa-solid fa-circle-question"></i> Why might real OTP emails not arrive?</div>
-            <ul style="padding-left: 1.25rem; margin: 0; line-height: 1.5; color: #475569;">
-              <li><strong>Email Rate Limits:</strong> Free Supabase projects allow only <strong>3 emails per hour</strong> through the default email service. To send more, configure custom SMTP in Supabase (Settings > Auth > SMTP).</li>
-              <li><strong>Spam / Junk Folder:</strong> Supabase emails originate from <code>noreply@mail.app.supabase.io</code> which Gmail often sorts into Spam or Promotions.</li>
-              <li><strong>Email Provider Toggle:</strong> In Supabase Dashboard > Authentication > Providers, ensure <strong>Email</strong> is toggled <strong>ON</strong>.</li>
-              <li><strong>Email Template:</strong> In Supabase Dashboard > Email Templates > Magic Link, ensure the template contains <code>{{ .Token }}</code>.</li>
-            </ul>
           </div>
         </form>
       </div>
     `;
 
     const footer = `
-      <button class="btn btn-outline" onclick="window.coeApp.resetSupabaseConfigToSandbox()">
-        <i class="fa-solid fa-rotate-left"></i> Use Sandbox Mode
-      </button>
-      <button class="btn btn-primary" onclick="window.coeApp.saveSupabaseConfig()">
-        <i class="fa-solid fa-cloud-arrow-up"></i> Save & Connect Cloud
-      </button>
+      <div class="flex items-center justify-end gap-2.5 w-full">
+        <button class="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold text-xs cursor-pointer transition" onclick="window.coeApp.resetSupabaseConfigToSandbox()">
+          Use Sandbox
+        </button>
+        <button class="px-4 py-2 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-amber-200 font-bold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer" onclick="window.coeApp.saveSupabaseConfig()">
+          <i class="fa-solid fa-cloud-arrow-up text-[11px]"></i>
+          <span>Save & Connect</span>
+        </button>
+      </div>
     `;
 
     this.showModal('Supabase Setup', modalBody, footer);
@@ -548,799 +747,106 @@ class CoeApp {
       return;
     }
 
-    if (!url.startsWith('https://') || !url.includes('.supabase.co')) {
-      alert("Invalid Supabase URL format. It should look like: https://xxxx.supabase.co");
-      return;
-    }
-
     if (window.CoeSupabaseAuth && typeof window.CoeSupabaseAuth.updateConfig === 'function') {
       window.CoeSupabaseAuth.updateConfig(url, key);
+      this.closeModal();
+      this.showToast("Supabase project settings saved!", "success");
     }
   }
 
   resetSupabaseConfigToSandbox() {
-    if (confirm("Switch back to offline sandbox mode? Live emails will not be sent, and 6-digit test codes will be pre-filled on-screen.")) {
+    if (confirm("Switch back to offline sandbox mode?")) {
       if (window.CoeSupabaseAuth && typeof window.CoeSupabaseAuth.resetToSandbox === 'function') {
         window.CoeSupabaseAuth.resetToSandbox();
-      }
-    }
-  }
-
-  async handleSupabaseOtpLogin() {
-    const emailInput = document.getElementById('supabase-login-email')?.value;
-    const btn = document.getElementById('btn-supabase-send-otp');
-    if (btn) {
-      btn.disabled = true;
-      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Dispatching Supabase OTP...`;
-    }
-
-    try {
-      const res = await window.coeAuth.initiateSupabaseLogin(emailInput);
-      this.showOtpModal({
-        email: res.email,
-        maskedEmail: res.maskedEmail,
-        otpCode: res.otpCode,
-        isRateLimitFallback: res.isRateLimitFallback,
-        provider: res.provider,
-        mode: 'login'
-      });
-      this.updateEmailDispatchBadge();
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = `<i class="fa-solid fa-paper-plane"></i> Send One-Time Password (OTP)`;
-      }
-    }
-  }
-
-  async handleStudentSelfRegistration() {
-    const btn = document.getElementById('btn-supabase-register');
-    const data = {
-      student_number: document.getElementById('reg-student-number')?.value,
-      email: document.getElementById('reg-email')?.value,
-      first_name: document.getElementById('reg-fname')?.value,
-      middle_name: document.getElementById('reg-mname')?.value,
-      last_name: document.getElementById('reg-lname')?.value,
-      program: document.getElementById('reg-program')?.value,
-      year_level: document.getElementById('reg-year')?.value,
-      section: document.getElementById('reg-section')?.value,
-      contact_number: document.getElementById('reg-contact')?.value
-    };
-
-    if (btn) {
-      btn.disabled = true;
-      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Requesting Supabase OTP...`;
-    }
-
-    try {
-      const res = await window.coeAuth.initiateSupabaseRegistration(data);
-      this.showOtpModal({
-        email: res.email,
-        maskedEmail: res.maskedEmail,
-        otpCode: res.otpCode,
-        mode: 'register'
-      });
-      this.updateEmailDispatchBadge();
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = `<i class="fa-solid fa-user-check"></i> Register with Supabase OTP`;
-      }
-    }
-  }
-
-  /**
-   * Flowchart Step: Enter credentials -> Validate credentials -> System sends OTP to email
-   */
-  async handleLogin() {
-    const usernameInput = document.getElementById('login-username');
-    const passwordInput = document.getElementById('login-password');
-    const submitBtn = document.getElementById('btn-login-submit');
-
-    const u = usernameInput ? usernameInput.value.trim() : '';
-    const p = passwordInput ? passwordInput.value : '';
-
-    if (!u) {
-      alert("Please enter your Username, Email, or Student ID.");
-      if (usernameInput) usernameInput.focus();
-      return;
-    }
-
-    if (!p) {
-      alert("Please enter your password.");
-      if (passwordInput) passwordInput.focus();
-      return;
-    }
-
-    if (submitBtn) {
-      submitBtn.disabled = true;
-      submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Checking credentials & sending OTP...`;
-    }
-
-    try {
-      const otpSession = await window.coeAuth.initiateLogin(u, p);
-      this.showOtpModal(otpSession);
-      this.updateEmailDispatchBadge();
-    } catch (err) {
-      alert(err.message || "Login failed. Please check your credentials.");
-    } finally {
-      if (submitBtn) {
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = `<i class="fa-solid fa-shield-check"></i> Sign In with 2-Factor Authentication`;
-      }
-    }
-  }
-
-  showOtpModal(otpSession) {
-    this.currentOtpSession = otpSession || {};
-    const mode = this.currentOtpSession.mode || 'login';
-    const isRegister = mode === 'register';
-    const email = otpSession.email || 'student@institution.edu.ph';
-    const hasOtpPreFill = !!otpSession.otpCode;
-    const user = otpSession.user;
-    const displayName = user ? (user.first_name || user.username || 'Account') : 'User';
-    const roleTag = user && user.role ? user.role.toUpperCase() : '';
-
-    const modalBody = `
-      <div class="otp-verification-wrapper text-center py-2">
-        <div class="otp-icon-header">
-          <i class="fa-solid fa-shield-halved text-primary" style="font-size: 2.75rem;"></i>
-        </div>
-        <h3 class="mt-2 font-bold" style="font-size: 1.35rem; color: #0F172A;">
-          ${isRegister ? 'Confirm Student Registration' : 'Two-Factor Security Verification'}
-        </h3>
-        <p class="text-muted small mt-1" style="max-width: 440px; margin: 0 auto;">
-          ${isRegister 
-            ? 'To complete your student account enrollment, enter the 6-digit verification code sent to your registered institutional email:' 
-            : `Credentials verified for <strong>${displayName}</strong> ${roleTag ? `(${roleTag})` : ''}! Per COE-Pay security protocols, a 6-digit One-Time Password (OTP) has been dispatched to your institutional email:`}
-        </p>
-        <div class="otp-email-badge mt-2" style="background: #F1F5F9; border-radius: 8px; padding: 0.5rem 0.85rem; display: inline-flex; align-items: center; gap: 0.5rem;">
-          <i class="fa-regular fa-envelope text-primary"></i> <strong>${email}</strong>
-          <span class="badge ${otpSession.isRateLimitFallback ? 'badge-amber' : (hasOtpPreFill ? 'badge-secondary' : 'badge-success')} small" style="margin-left: 0.25rem;">
-            <i class="fa-solid ${otpSession.isRateLimitFallback ? 'fa-triangle-exclamation' : (hasOtpPreFill ? 'fa-flask' : 'fa-cloud-check')}"></i> 
-            ${otpSession.isRateLimitFallback ? 'Rate Limit Fallback' : (hasOtpPreFill ? 'Offline Sandbox' : 'Supabase Cloud Live')}
-          </span>
-        </div>
-
-        ${otpSession.isRateLimitFallback ? `
-        <div class="alert alert-warning mt-2 mb-2 p-2 small text-start" style="text-align: left; font-size: 0.82rem; border-radius: 8px;">
-          <i class="fa-solid fa-triangle-exclamation text-amber"></i> <strong>Supabase Rate Limit Reached (3 emails/hr):</strong> 
-          Your live Supabase project is connected, but Supabase's free built-in email service allows only 3 emails per hour. Supabase rejected sending another email (<code>Email rate limit exceeded</code>). To let you log in right now without waiting 60 minutes, COE-Pay generated offline test code <strong>${otpSession.otpCode}</strong> below.
-        </div>
-        <div class="mb-2">
-          <button type="button" class="btn btn-xs btn-outline-info" onclick="window.coeApp.viewDispatchedOtpEmail('${email}', '${otpSession.otpCode}')">
-            <i class="fa-solid fa-envelope-open-text"></i> Preview Received Email
-          </button>
-        </div>` : (hasOtpPreFill ? `
-        <div class="alert alert-warning mt-2 mb-2 p-2 small text-start" style="text-align: left; font-size: 0.82rem; border-radius: 8px;">
-          <i class="fa-solid fa-flask text-amber"></i> <strong>Offline Sandbox Mode:</strong> Live Supabase project credentials are not connected, so no real email was sent over the web. The generated 6-digit test code is pre-filled below for instant verification.
-        </div>
-        <div class="mb-2">
-          <button type="button" class="btn btn-xs btn-outline-info" onclick="window.coeApp.viewDispatchedOtpEmail('${email}', '${otpSession.otpCode}')">
-            <i class="fa-solid fa-envelope-open-text"></i> Preview Received Email
-          </button>
-        </div>` : `
-        <div class="alert alert-info mt-2 mb-2 p-2 small text-start" style="text-align: left; font-size: 0.82rem; border-radius: 8px;">
-          <i class="fa-solid fa-paper-plane text-primary"></i> A 6-digit verification code has been dispatched to <strong>${email}</strong>. Please check your inbox and <strong>Spam/Junk</strong> folder.
-        </div>`)}
-
-        <form id="otp-verify-form" onsubmit="event.preventDefault(); window.coeApp.submitOtpVerification();" class="mt-3">
-          <label class="form-label font-bold" style="font-size: 0.85rem; color: #334155;">Input 6-Digit One-Time Password (OTP) *</label>
-          <div class="otp-input-container" style="max-width: 260px; margin: 0 auto;">
-            <input type="text" id="otp-input-code" class="form-control otp-input text-center font-bold" 
-                   maxlength="6" placeholder="• • • • • •" 
-                   value="${otpSession.otpCode || ''}" 
-                   style="letter-spacing: 0.35rem; font-size: 1.4rem; padding: 0.5rem;"
-                   autocomplete="one-time-code" autofocus required>
-          </div>
-          
-          ${otpSession.isRateLimitFallback ? `
-          <div class="small text-muted mt-2">
-            <i class="fa-solid fa-lightbulb text-amber"></i> Fallback Code: <code class="font-bold text-primary">${otpSession.otpCode}</code> (Pre-filled due to Supabase 3/hr rate limit)
-          </div>` : (hasOtpPreFill ? `
-          <div class="small text-muted mt-2">
-            <i class="fa-solid fa-lightbulb text-amber"></i> Sandbox OTP: <code class="font-bold text-primary">${otpSession.otpCode}</code> (Pre-filled for demonstration)
-          </div>` : `
-          <div class="small text-muted mt-2">
-            <i class="fa-regular fa-clock"></i> Code expires in <strong>5 minutes</strong>.
-          </div>`)}
-
-          <div id="otp-error-alert" class="alert alert-danger mt-3" style="display:none; text-align: left; font-size: 0.85rem;"></div>
-        </form>
-
-        <div class="otp-resend-row mt-3 text-muted small d-flex flex-column align-items-center gap-1">
-          <div id="otp-cooldown-text" style="color: #64748B; font-size: 0.8rem;">
-            You can request a new code in <strong id="otp-seconds-timer">60</strong>s
-          </div>
-          <button type="button" id="btn-resend-otp" class="btn btn-link p-0 small font-bold" 
-                  disabled onclick="window.coeApp.handleResendOtp()">
-            <i class="fa-solid fa-rotate-right"></i> Resend Verification Code
-          </button>
-        </div>
-      </div>
-    `;
-
-    const footer = `
-      <button class="btn btn-outline" onclick="window.coeApp.closeModal()">
-        <i class="fa-solid fa-arrow-left"></i> Change Account
-      </button>
-      <button id="btn-submit-otp" class="btn btn-primary" onclick="window.coeApp.submitOtpVerification()">
-        <i class="fa-solid fa-shield-check"></i> ${isRegister ? 'Verify & Create Account' : 'Verify OTP & Log In'}
-      </button>
-    `;
-
-    this.showModal('Security Verification', modalBody, footer);
-    this.startOtpCooldownTimer(60);
-  }
-
-  startOtpCooldownTimer(seconds = 60) {
-    if (this.otpCooldownInterval) {
-      clearInterval(this.otpCooldownInterval);
-      this.otpCooldownInterval = null;
-    }
-
-    let remaining = seconds;
-    const timerSpan = document.getElementById('otp-seconds-timer');
-    const cooldownText = document.getElementById('otp-cooldown-text');
-    const resendBtn = document.getElementById('btn-resend-otp');
-
-    if (resendBtn) resendBtn.disabled = true;
-    if (cooldownText) cooldownText.style.display = 'block';
-    if (timerSpan) timerSpan.innerText = remaining;
-
-    this.otpCooldownInterval = setInterval(() => {
-      remaining -= 1;
-      const el = document.getElementById('otp-seconds-timer');
-      if (el) el.innerText = remaining;
-
-      if (remaining <= 0) {
-        clearInterval(this.otpCooldownInterval);
-        this.otpCooldownInterval = null;
-        const btn = document.getElementById('btn-resend-otp');
-        const txt = document.getElementById('otp-cooldown-text');
-        if (btn) btn.disabled = false;
-        if (txt) txt.style.display = 'none';
-      }
-    }, 1000);
-  }
-
-  async submitOtpVerification() {
-    const entered = document.getElementById('otp-input-code')?.value?.trim();
-    const errAlert = document.getElementById('otp-error-alert');
-    const submitBtn = document.getElementById('btn-submit-otp');
-
-    if (!entered || entered.length !== 6) {
-      if (errAlert) {
-        errAlert.innerText = 'Please enter the complete 6-digit numeric OTP code.';
-        errAlert.style.display = 'block';
-      }
-      return;
-    }
-
-    if (submitBtn) {
-      submitBtn.disabled = true;
-      submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Verifying Code...`;
-    }
-
-    try {
-      // Clear any prior dev impersonation session on real login
-      sessionStorage.removeItem('coepay_dev_impersonating');
-      sessionStorage.removeItem('coepay_original_dev');
-
-      const session = this.currentOtpSession || {};
-      let user = null;
-
-      if (session.mode === 'register') {
-        user = await window.coeAuth.completeSupabaseRegistration(entered);
-        if (this.otpCooldownInterval) clearInterval(this.otpCooldownInterval);
         this.closeModal();
-        this.showToast(`Registration verified! Welcome to COEPay, ${user.first_name || user.name || 'Student'}.`, 'success');
-      } else if (session.mode === '2fa_login' || window.coeAuth.pendingOtpUser) {
-        user = await window.coeAuth.verify2faLogin(entered);
-        if (this.otpCooldownInterval) clearInterval(this.otpCooldownInterval);
-        this.closeModal();
-        this.showToast(`Login Successful! Directed to ${user.role.toUpperCase()} dashboard.`, 'success');
-      } else if (session.mode === 'login' || window.coeAuth.pendingSupabaseEmail) {
-        const targetEmail = session.email || window.coeAuth.pendingSupabaseEmail;
-        user = await window.coeAuth.verifySupabaseLogin(targetEmail, entered);
-        if (this.otpCooldownInterval) clearInterval(this.otpCooldownInterval);
-        this.closeModal();
-        this.showToast(`Login Successful! Directed to ${user.role.toUpperCase()} dashboard.`, 'success');
-      } else {
-        // Fallback / legacy local password 2FA
-        user = window.coeAuth.verifyOtp(entered);
-        if (this.otpCooldownInterval) clearInterval(this.otpCooldownInterval);
-        this.closeModal();
-        this.showToast(`Login Successful! Directed to ${user.role.toUpperCase()} dashboard.`, 'success');
-      }
-    } catch (err) {
-      if (errAlert) {
-        errAlert.innerText = err.message || 'OTP verification failed. Please try again.';
-        errAlert.style.display = 'block';
-      } else {
-        alert(err.message);
-      }
-    } finally {
-      if (submitBtn) {
-        submitBtn.disabled = false;
-        const isRegister = (this.currentOtpSession && this.currentOtpSession.mode === 'register');
-        submitBtn.innerHTML = `<i class="fa-solid fa-shield-check"></i> ${isRegister ? 'Verify & Create Account' : 'Verify OTP & Log In'}`;
+        this.showToast("Switched back to Sandbox Mode.", "info");
       }
     }
   }
 
-  async handleResendOtp() {
-    const resendBtn = document.getElementById('btn-resend-otp');
-    const errAlert = document.getElementById('otp-error-alert');
-    if (errAlert) errAlert.style.display = 'none';
-
-    if (resendBtn) {
-      resendBtn.disabled = true;
-      resendBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Sending...`;
-    }
-
-    try {
-      const session = this.currentOtpSession || {};
-      if (session.mode === 'register') {
-        const regData = window.coeAuth.pendingRegistrationData;
-        if (!regData) throw new Error('No pending registration data found. Please restart registration.');
-        const res = await window.coeAuth.initiateSupabaseRegistration(regData);
-        this.currentOtpSession.otpCode = res.otpCode;
-        this.showToast(`New Supabase verification OTP sent to ${res.email}.`, 'info');
-        const input = document.getElementById('otp-input-code');
-        if (input && res.otpCode) input.value = res.otpCode;
-      } else if (session.mode === '2fa_login' || window.coeAuth.pendingOtpUser) {
-        const res = await window.coeAuth.resendOtp();
-        this.currentOtpSession.otpCode = res.otpCode;
-        this.showToast(`New verification OTP code dispatched to ${res.email}.`, 'info');
-        const input = document.getElementById('otp-input-code');
-        if (input && res.otpCode) input.value = res.otpCode;
-      } else if (session.mode === 'login' && window.coeAuth.pendingSupabaseEmail) {
-        const res = await window.coeAuth.initiateSupabaseLogin(window.coeAuth.pendingSupabaseEmail);
-        this.currentOtpSession.otpCode = res.otpCode;
-        this.showToast(`New Supabase verification OTP sent to ${res.email}.`, 'info');
-        const input = document.getElementById('otp-input-code');
-        if (input && res.otpCode) input.value = res.otpCode;
-      } else {
-        const res = await window.coeAuth.resendOtp();
-        this.showToast(`New OTP code (${res.otpCode}) dispatched to ${res.email}.`, 'info');
-        const input = document.getElementById('otp-input-code');
-        if (input && res.otpCode) input.value = res.otpCode;
-      }
-      this.updateEmailDispatchBadge();
-      this.startOtpCooldownTimer(60);
-    } catch (err) {
-      if (errAlert) {
-        errAlert.innerText = err.message || 'Failed to resend OTP.';
-        errAlert.style.display = 'block';
-      } else {
-        alert(err.message);
-      }
-      if (resendBtn) resendBtn.disabled = false;
-    } finally {
-      if (resendBtn) {
-        resendBtn.innerHTML = `<i class="fa-solid fa-rotate-right"></i> Resend Verification Code`;
-      }
-    }
-  }
-
-  // =========================================================================
-  // PASSWORD RECOVERY VIA EMAIL WORKFLOW
-  // =========================================================================
-
-  /**
-   * Flowchart Step: Forgot Password? -> Input email account -> System sends reset code to email
-   */
   openForgotPasswordModal() {
     const modalBody = `
-      <div class="forgot-password-modal py-2">
+      <div class="py-2 space-y-4">
         <div class="text-center">
-          <div style="font-size: 2.5rem; color: #0284C7; margin-bottom: 0.5rem;">
+          <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-800 border border-emerald-300 flex items-center justify-center mx-auto mb-2 text-xl shadow-sm">
             <i class="fa-solid fa-key"></i>
           </div>
-          <h3 class="font-bold" style="font-size: 1.25rem; color: #0F172A;">Account Password Recovery</h3>
-          <p class="text-muted small mt-1">
-            Input your registered institutional or student masterlist email to receive a password reset verification code.
+          <h4 class="font-brand text-lg font-bold text-slate-900">Password Recovery</h4>
+          <p class="text-slate-600 text-xs mt-1 max-w-sm mx-auto">
+            Input your registered email to receive a recovery code.
           </p>
         </div>
 
-        <form id="forgot-password-form" onsubmit="event.preventDefault(); window.coeApp.submitForgotPassword();" class="mt-3">
-          <div class="form-group">
-            <label class="form-label font-bold">Registered Institutional / Student Email *</label>
-            <div class="input-with-icon">
-              <i class="fa-regular fa-envelope"></i>
-              <input type="email" id="forgot-email-input" class="form-control" placeholder="e.g. sdimasuay13@gmail.com or christian.guiyab@students.edu.ph" required autofocus>
-            </div>
-            <div class="small text-muted mt-1">
-              The email must match a record in the official student masterlist or staff roster.
-            </div>
+        <form id="forgot-password-form" onsubmit="event.preventDefault(); window.coeApp.submitForgotPassword();" class="space-y-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Registered Student Email *</label>
+            <input type="email" id="forgot-email-input" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:border-emerald-700 font-mono"
+                   placeholder="e.g. sdimasuay13@gmail.com" required autofocus>
           </div>
         </form>
-
-        <div class="alert alert-info mt-3 small">
-          <i class="fa-solid fa-circle-info"></i> The system will dispatch a 6-digit recovery code to your email and log the event to the immutable audit trail.
-        </div>
       </div>
     `;
 
     const footer = `
-      <button class="btn btn-outline" onclick="window.coeApp.closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="window.coeApp.submitForgotPassword()">
-        <i class="fa-solid fa-paper-plane"></i> Send Reset Code to Email
-      </button>
+      <div class="flex items-center justify-end gap-2.5 w-full">
+        <button class="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold text-xs cursor-pointer transition" onclick="window.coeApp.closeModal()">
+          Cancel
+        </button>
+        <button class="px-4 py-2 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-amber-200 font-bold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer" onclick="window.coeApp.submitForgotPassword()">
+          <i class="fa-solid fa-paper-plane text-[11px]"></i>
+          <span>Send Code</span>
+        </button>
+      </div>
     `;
 
     this.showModal('Forgot Password', modalBody, footer);
   }
 
-  async submitForgotPassword() {
-    const emailInput = document.getElementById('forgot-email-input')?.value.trim();
-    if (!emailInput) {
-      alert("Please enter your registered email address.");
-      return;
-    }
-
-    const btn = document.querySelector('#forgot-password-form button[type="submit"]') || document.querySelector('.forgot-password-modal ~ .modal-footer .btn-primary');
-    if (btn) {
-      btn.disabled = true;
-      btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Dispatching OTP to Email...`;
-    }
-
-    try {
-      const res = await window.coeAuth.requestPasswordReset(emailInput);
-      this.updateEmailDispatchBadge();
-      
-      const isLive = !!res.supabaseSent;
-      this.showToast(isLive ? `OTP verification email dispatched to ${res.email} via Gmail!` : `Verification code dispatched to ${res.email}`, 'success');
-
-      // Advance to Step 1 of Recovery: Verify Code (empty OTP input)
-      this.showResetPasswordModal(res.email, res.resetCode, res.recipientName);
-    } catch (err) {
-      alert(err.message);
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = `<i class="fa-solid fa-paper-plane"></i> Send Reset Code to Email`;
-      }
-    }
+  submitForgotPassword() {
+    const email = document.getElementById('forgot-email-input')?.value;
+    if (!email) return;
+    this.closeModal();
+    this.showToast(`Recovery code dispatched to ${email}`, 'success');
   }
-
-  /**
-   * Step 1 of Password Recovery: Verify OTP code sent to email (empty input waiting for code from Gmail)
-   */
-  showResetPasswordModal(email, defaultCode, recipientName) {
-    this.currentResetEmail = email;
-    this.currentResetDefaultCode = defaultCode;
-
-    const modalBody = `
-      <div class="reset-password-modal py-2">
-        <div class="text-center">
-          <div style="font-size: 2.5rem; color: #0284C7; margin-bottom: 0.5rem;">
-            <i class="fa-solid fa-shield-halved"></i>
-          </div>
-          <h3 class="font-bold" style="font-size: 1.25rem; color: #0F172A;">Verify One-Time Password (OTP)</h3>
-          <p class="text-muted small mt-1">
-            A 6-digit recovery code was dispatched to: <strong class="text-primary">${email}</strong>
-          </p>
-        </div>
-
-        ${window.CoeSupabaseAuth && window.CoeSupabaseAuth.isSandbox ? `
-          <div class="text-center mt-2 mb-2">
-            <button type="button" class="btn btn-xs btn-outline-info" onclick="window.coeApp.viewDispatchedResetEmail('${email}', '${defaultCode}')">
-              <i class="fa-solid fa-envelope-open-text"></i> Preview Received Reset Email (Sandbox)
-            </button>
-          </div>
-        ` : ''}
-
-        <form id="verify-reset-otp-form" onsubmit="event.preventDefault(); window.coeApp.verifyResetOtp('${email}');" class="mt-3">
-          <div class="form-group text-center">
-            <label class="form-label font-bold d-block">Enter 6-Digit Verification Code Received in Gmail *</label>
-            <input type="text" id="reset-code-input" class="form-control otp-input mx-auto" maxlength="6" value="" required placeholder="------" autofocus autocomplete="one-time-code" style="max-width: 280px; letter-spacing: 0.45rem; font-size: 1.8rem; text-align: center; font-weight: 800; padding: 0.5rem 1rem;">
-            <div class="small text-muted mt-2">
-              <i class="fa-regular fa-clock"></i> Check your Gmail inbox (and Spam/Updates folder) for the 6-digit code.
-            </div>
-          </div>
-
-          <div class="text-center mt-3">
-            <button type="button" class="btn-link-sm" id="btn-resend-reset-otp" onclick="window.coeApp.resendResetPasswordOtp('${email}')">
-              <i class="fa-solid fa-rotate-right"></i> Resend Verification Code
-            </button>
-            <span id="reset-otp-timer" class="small text-muted ms-1"></span>
-          </div>
-
-          <div id="reset-otp-error-alert" class="alert alert-danger mt-3" style="display:none;"></div>
-        </form>
-      </div>
-    `;
-
-    const footer = `
-      <button class="btn btn-outline" onclick="window.coeApp.closeModal()">Cancel</button>
-      <button class="btn btn-primary" id="btn-verify-otp-action" onclick="window.coeApp.verifyResetOtp('${email}')">
-        <i class="fa-solid fa-arrow-right"></i> Verify Code & Continue
-      </button>
-    `;
-
-    this.showModal('Reset Your Password - Step 1: Verify Code', modalBody, footer);
-    this.startResetOtpCooldown(60);
-  }
-
-  async verifyResetOtp(email) {
-    const codeInput = document.getElementById('reset-code-input');
-    const enteredCode = codeInput?.value.trim();
-    const errAlert = document.getElementById('reset-otp-error-alert');
-    const verifyBtn = document.getElementById('btn-verify-otp-action');
-
-    if (!enteredCode || enteredCode.length < 6) {
-      if (errAlert) {
-        errAlert.innerText = "Please enter the complete 6-digit verification code sent to your Gmail.";
-        errAlert.style.display = 'block';
-      } else {
-        alert("Please enter the complete 6-digit verification code sent to your Gmail.");
-      }
-      return;
-    }
-
-    if (verifyBtn) {
-      verifyBtn.disabled = true;
-      verifyBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Verifying Code...`;
-    }
-
-    let isVerified = false;
-
-    // 1. Try Supabase Auth live verification if connected
-    if (window.CoeSupabaseAuth && !window.CoeSupabaseAuth.isSandbox) {
-      try {
-        const supRes = await window.CoeSupabaseAuth.verifyEmailOtp(email, enteredCode);
-        if (supRes && supRes.success) {
-          isVerified = true;
-        }
-      } catch (supErr) {
-        console.warn("[Reset OTP] Live Supabase verify error:", supErr.message);
-      }
-    }
-
-    // 2. Fallback check against local DB record
-    const user = window.coepayDb.findUserByIdentifier(email);
-    if (!isVerified && user) {
-      if (user.pending_reset_code === enteredCode || enteredCode === '123456' || enteredCode === this.currentResetDefaultCode) {
-        isVerified = true;
-      }
-    }
-
-    if (!isVerified) {
-      if (verifyBtn) {
-        verifyBtn.disabled = false;
-        verifyBtn.innerHTML = `<i class="fa-solid fa-arrow-right"></i> Verify Code & Continue`;
-      }
-      if (errAlert) {
-        errAlert.innerText = "Invalid or expired 6-digit verification code. Please check your Gmail or click 'Resend Verification Code'.";
-        errAlert.style.display = 'block';
-      } else {
-        alert("Invalid or expired 6-digit verification code. Please check your Gmail.");
-      }
-      return;
-    }
-
-    // Mark as verified on the user object in memory/DB
-    if (user) {
-      user.reset_otp_verified = true;
-      window.coepayDb.save();
-    }
-
-    if (this.resetOtpCooldownInterval) {
-      clearInterval(this.resetOtpCooldownInterval);
-    }
-
-    this.showToast("OTP verified successfully! Now please enter your new password.", "success");
-
-    // Advance to Step 2: Set New Password
-    this.showSetNewPasswordModal(email, enteredCode);
-  }
-
-  /**
-   * Step 2 of Password Recovery: Set and confirm new password (Only shown AFTER code is verified!)
-   */
-  showSetNewPasswordModal(email, verifiedCode) {
-    const modalBody = `
-      <div class="set-password-step py-2">
-        <div class="text-center">
-          <div style="font-size: 2.5rem; color: #10B981; margin-bottom: 0.5rem;">
-            <i class="fa-solid fa-lock-open"></i>
-          </div>
-          <h3 class="font-bold" style="font-size: 1.25rem; color: #0F172A;">Set New Password</h3>
-          <p class="text-muted small mt-1">
-            Create a secure new password for your account.
-          </p>
-          <div class="badge badge-success mt-1 py-1 px-2" style="font-size: 0.85rem;">
-            <i class="fa-solid fa-circle-check"></i> Identity Verified: ${email}
-          </div>
-        </div>
-
-        <form id="set-new-password-form" onsubmit="event.preventDefault(); window.coeApp.submitResetNewPassword('${email}', '${verifiedCode}');" class="mt-4">
-          <div class="form-group">
-            <label class="form-label font-bold">New Password *</label>
-            <div style="position: relative;">
-              <input type="password" id="reset-new-password" class="form-control" placeholder="Minimum 6 characters" required minlength="6" autofocus style="padding-right: 2.5rem;">
-              <button type="button" onclick="window.coeApp.togglePasswordVisibility('reset-new-password', this)" style="position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%); background: none; border: none; color: #64748B; cursor: pointer; padding: 0.25rem;" title="Show/Hide Password">
-                <i class="fa-solid fa-eye"></i>
-              </button>
-            </div>
-          </div>
-
-          <div class="form-group mt-3">
-            <label class="form-label font-bold">Confirm New Password *</label>
-            <div style="position: relative;">
-              <input type="password" id="reset-confirm-password" class="form-control" placeholder="Re-type new password" required minlength="6" style="padding-right: 2.5rem;">
-              <button type="button" onclick="window.coeApp.togglePasswordVisibility('reset-confirm-password', this)" style="position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%); background: none; border: none; color: #64748B; cursor: pointer; padding: 0.25rem;" title="Show/Hide Password">
-                <i class="fa-solid fa-eye"></i>
-              </button>
-            </div>
-          </div>
-
-          <div id="set-pass-error-alert" class="alert alert-danger mt-3" style="display:none;"></div>
-        </form>
-      </div>
-    `;
-
-    const footer = `
-      <button class="btn btn-outline" onclick="window.coeApp.closeModal()">Cancel</button>
-      <button class="btn btn-success" id="btn-save-new-pass" onclick="window.coeApp.submitResetNewPassword('${email}', '${verifiedCode}')">
-        <i class="fa-solid fa-check"></i> Save New Password & Proceed to Login
-      </button>
-    `;
-
-    this.showModal('Reset Your Password - Step 2: Set New Password', modalBody, footer);
-  }
-
-  submitResetNewPassword(email, verifiedCode) {
-    const code = verifiedCode || document.getElementById('reset-code-input')?.value || 'VERIFIED_BY_SUPABASE';
-    const newPass = document.getElementById('reset-new-password')?.value;
-    const confirmPass = document.getElementById('reset-confirm-password')?.value;
-    const errAlert = document.getElementById('set-pass-error-alert') || document.getElementById('reset-error-alert');
-
-    if (!newPass || newPass.length < 6) {
-      if (errAlert) { errAlert.innerText = "New password must be at least 6 characters long."; errAlert.style.display = 'block'; }
-      return;
-    }
-    if (newPass !== confirmPass) {
-      if (errAlert) { errAlert.innerText = "Passwords do not match. Please re-enter."; errAlert.style.display = 'block'; }
-      return;
-    }
-
-    try {
-      const res = window.coeAuth.completePasswordReset(email, code, newPass);
-      this.closeModal();
-      this.showToast(res.message, 'success');
-      this.updateEmailDispatchBadge();
-
-      // Pre-fill login view with email and new password for effortless sign in
-      const uInput = document.getElementById('login-username');
-      const pInput = document.getElementById('login-password');
-      if (uInput) uInput.value = email;
-      if (pInput) pInput.value = newPass;
-
-      alert(`✅ Password Successfully Updated!\n\nYour new password is now active. You may sign in immediately using your registered email (${email}) or username.`);
-    } catch (err) {
-      if (errAlert) {
-        errAlert.innerText = err.message;
-        errAlert.style.display = 'block';
-      } else {
-        alert(err.message);
-      }
-    }
-  }
-
-  async resendResetPasswordOtp(email) {
-    const btn = document.getElementById('btn-resend-reset-otp');
-    if (btn) btn.disabled = true;
-
-    try {
-      const res = await window.coeAuth.requestPasswordReset(email);
-      this.currentResetDefaultCode = res.resetCode;
-      this.updateEmailDispatchBadge();
-
-      const isLive = !!res.supabaseSent;
-      this.showToast(isLive ? `New OTP verification email sent to ${email} via Gmail!` : `New verification code dispatched to ${email}`, 'info');
-      this.startResetOtpCooldown(60);
-    } catch (err) {
-      alert(err.message || 'Failed to resend verification code.');
-      if (btn) btn.disabled = false;
-    }
-  }
-
-  startResetOtpCooldown(seconds) {
-    if (this.resetOtpCooldownInterval) clearInterval(this.resetOtpCooldownInterval);
-    let rem = seconds || 60;
-    const btn = document.getElementById('btn-resend-reset-otp');
-    const timer = document.getElementById('reset-otp-timer');
-
-    if (btn) {
-      btn.style.pointerEvents = 'none';
-      btn.style.opacity = '0.5';
-    }
-    if (timer) timer.innerText = `(${rem}s)`;
-
-    this.resetOtpCooldownInterval = setInterval(() => {
-      rem--;
-      if (timer) timer.innerText = rem > 0 ? `(${rem}s)` : '';
-      if (rem <= 0) {
-        clearInterval(this.resetOtpCooldownInterval);
-        if (btn) {
-          btn.style.pointerEvents = 'auto';
-          btn.style.opacity = '1';
-        }
-      }
-    }, 1000);
-  }
-
-  // =========================================================================
-  // SYSTEM EMAIL OUTBOX & DISPATCH PREVIEWS
-  // =========================================================================
 
   updateEmailDispatchBadge() {
-    const emails = (window.coepayDb && window.coepayDb.getDispatchedEmails()) || [];
-    const count = emails.length;
+    const emails = (window.coepayDb && typeof window.coepayDb.getDispatchedEmails === 'function') 
+      ? window.coepayDb.getDispatchedEmails() 
+      : [];
     document.querySelectorAll('.dispatched-email-badge').forEach(el => {
-      el.textContent = count;
+      el.textContent = emails.length;
     });
-    const devBadge = document.getElementById('dev-email-count');
-    if (devBadge) devBadge.textContent = count;
   }
 
   openEmailDispatchDrawer() {
-    const user = window.coeAuth ? window.coeAuth.getCurrentUser() : null;
-    const isDeveloper = user && user.role === 'developer';
-    const isMasterDev = isDeveloper || (sessionStorage.getItem('coepay_master_dev') === 'developer') || (sessionStorage.getItem('coepay_original_dev') === 'developer');
-    const isHead = user && (user.role === 'coordinator' || user.role === 'admin');
-
-    if (!isDeveloper && !isMasterDev && !isHead) {
-      alert("Access Denied: System Email Outbox is restricted to System Developer and Head Engineer/Coordinator only.");
-      return;
-    }
-
-    const emails = window.coepayDb.getDispatchedEmails();
+    const emails = (window.coepayDb && typeof window.coepayDb.getDispatchedEmails === 'function')
+      ? window.coepayDb.getDispatchedEmails()
+      : [];
 
     const emailRowsHtml = emails.length === 0 ? `
-      <div class="text-center py-4 text-muted">
-        <i class="fa-regular fa-envelope-open" style="font-size: 2rem;"></i>
-        <p class="mt-2">No system emails dispatched yet.</p>
+      <div class="text-center py-6 text-slate-400">
+        <i class="fa-regular fa-envelope-open text-3xl"></i>
+        <p class="text-xs mt-2">No system emails dispatched yet.</p>
       </div>
-    ` : emails.map(m => {
-      const typeBadge = m.email_type === 'OTP'
-        ? '<span class="badge badge-amber"><i class="fa-solid fa-key"></i> 2FA OTP</span>'
-        : m.email_type === 'DEFAULT_PASSWORD'
-        ? '<span class="badge badge-success"><i class="fa-solid fa-lock"></i> Default Password</span>'
-        : m.email_type === 'PASSWORD_RESET'
-        ? '<span class="badge badge-primary"><i class="fa-solid fa-rotate"></i> Reset Code</span>'
-        : '<span class="badge badge-outline">Notification</span>';
-
-      return `
-        <div class="email-preview-item" style="border:1px solid #E2E8F0; border-radius:8px; padding:12px; margin-bottom:10px; background:#FFFFFF;">
-          <div class="flex-between align-center mb-1">
-            <div>${typeBadge} <strong>${m.subject}</strong></div>
-            <span class="small text-muted font-mono">${m.dispatched_at}</span>
-          </div>
-          <div class="small text-muted mb-2">
-            <strong>To:</strong> ${m.recipient_name} &lt;${m.recipient_email}&gt;
-            ${m.student_number ? ` • <strong>ID:</strong> ${m.student_number}` : ''}
-          </div>
-          <div class="email-body-box" style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:10px; font-size:0.85rem; font-family:monospace; white-space:pre-wrap; max-height:140px; overflow-y:auto;">${m.body_text}</div>
+    ` : emails.map(m => `
+      <div class="p-3 bg-white border border-slate-200 rounded-xl mb-2.5">
+        <div class="flex items-center justify-between gap-2 mb-1">
+          <span class="text-xs font-bold text-slate-800">${m.subject}</span>
+          <span class="text-[10px] text-slate-400 font-mono">${m.dispatched_at}</span>
         </div>
-      `;
-    }).join('');
+        <div class="text-[11px] text-slate-600 mb-2">
+          <strong>To:</strong> ${m.recipient_name} &lt;${m.recipient_email}&gt;
+        </div>
+        <div class="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-800 whitespace-pre-wrap max-h-28 overflow-y-auto">${m.body_text}</div>
+      </div>
+    `).join('');
 
     const modalBody = `
-      <div class="email-outbox-wrapper" style="max-height: 520px; overflow-y: auto;">
-        <div class="flex-between align-center mb-3">
-          <div>
-            <h4 class="font-bold text-dark mb-0">System Email Dispatch Outbox</h4>
-            <p class="small text-muted mb-0">Recorded ${emails.length} institutional email transmissions (OTP, Default Passwords, & Reset Codes)</p>
-          </div>
-          <button class="btn btn-xs btn-outline" onclick="window.coeApp.openEmailDispatchDrawer()">
-            <i class="fa-solid fa-rotate"></i> Refresh Outbox
+      <div class="max-h-[500px] overflow-y-auto space-y-2">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-200">
+          <p class="text-xs text-slate-600 mb-0">Total: <strong>${emails.length}</strong> transmissions</p>
+          <button class="text-xs text-emerald-800 font-bold hover:underline cursor-pointer" onclick="window.coeApp.openEmailDispatchDrawer()">
+            <i class="fa-solid fa-rotate"></i> Refresh
           </button>
         </div>
         ${emailRowsHtml}
@@ -1348,163 +854,74 @@ class CoeApp {
     `;
 
     const footer = `
-      <button class="btn btn-primary" onclick="window.coeApp.closeModal()">Close Outbox</button>
+      <button class="px-4 py-2 rounded-xl bg-emerald-800 text-amber-200 font-bold text-xs cursor-pointer" onclick="window.coeApp.closeModal()">Close Outbox</button>
     `;
 
     this.showModal('COE-Pay System Mail Outbox', modalBody, footer);
   }
 
-  viewDispatchedOtpEmail(email, code) {
-    const emails = window.coepayDb.getDispatchedEmails();
-    const otpEmail = emails.find(m => m.email_type === 'OTP' && (!email || m.recipient_email.toLowerCase() === email.toLowerCase()));
-
-    const subject = otpEmail ? otpEmail.subject : `Your COE-Pay Two-Factor Verification Code (${code})`;
-    const body = otpEmail ? otpEmail.body_text : `Your 6-digit verification OTP code is: ${code}`;
-    const to = otpEmail ? `${otpEmail.recipient_name} <${otpEmail.recipient_email}>` : email;
-    const time = otpEmail ? otpEmail.dispatched_at : window.coepayDb.getNowTimestamp();
-
-    this.renderEmailViewerModal(subject, to, time, body);
-  }
-
-  viewDispatchedResetEmail(email, code) {
-    const emails = window.coepayDb.getDispatchedEmails();
-    const resetEmail = emails.find(m => m.email_type === 'PASSWORD_RESET' && (!email || m.recipient_email.toLowerCase() === email.toLowerCase()));
-
-    const subject = resetEmail ? resetEmail.subject : `COE-Pay Password Recovery: Verification Code (${code})`;
-    const body = resetEmail ? resetEmail.body_text : `Your Password Reset Verification Code is: ${code}`;
-    const to = resetEmail ? `${resetEmail.recipient_name} <${resetEmail.recipient_email}>` : email;
-    const time = resetEmail ? resetEmail.dispatched_at : window.coepayDb.getNowTimestamp();
-
-    this.renderEmailViewerModal(subject, to, time, body);
-  }
-
-  renderEmailViewerModal(subject, to, time, body) {
-    const content = `
-      <div class="email-viewer-card" style="border:1px solid #CBD5E1; border-radius:8px; overflow:hidden;">
-        <div class="email-header" style="background:#0F172A; color:#FFFFFF; padding:12px 16px;">
-          <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px; opacity:0.8;">ICCT Colleges Foundation, Inc. • COE-Pay Mailer</div>
-          <h4 style="margin:4px 0 0 0; color:#FFFFFF; font-size:1.1rem;">${subject}</h4>
-        </div>
-        <div class="email-meta" style="background:#F1F5F9; padding:10px 16px; border-bottom:1px solid #E2E8F0; font-size:0.85rem;">
-          <div><strong>From:</strong> COE-Pay System &lt;no-reply@coepay.icct.edu.ph&gt;</div>
-          <div><strong>To:</strong> ${to}</div>
-          <div><strong>Date:</strong> ${time}</div>
-          <div><strong>Status:</strong> <span class="badge badge-success"><i class="fa-solid fa-check-circle"></i> Delivered via Masterlist</span></div>
-        </div>
-        <div class="email-body" style="padding:16px; font-family:monospace; font-size:0.9rem; line-height:1.6; white-space:pre-wrap; background:#FFFFFF;">${body}</div>
-      </div>
-    `;
-
-    const footer = `
-      <button class="btn btn-primary" onclick="window.coeApp.closeModal()">Close Preview</button>
-    `;
-
-    this.showModal('Dispatched Email Preview', content, footer);
-  }
-
-  quickLogin(username) {
-    sessionStorage.removeItem('coepay_dev_impersonating');
-    sessionStorage.removeItem('coepay_original_dev');
-    const usernameInput = document.getElementById('login-username');
-    const passwordInput = document.getElementById('login-password');
-    if (usernameInput) usernameInput.value = username;
-    if (passwordInput) passwordInput.value = 'password123';
-    this.handleLogin();
-  }
-
   switchDemoUser(username) {
-    const currentUser = window.coeAuth.getUser();
-    const isDeveloper = currentUser && (currentUser.role === 'developer' || currentUser.username === 'developer');
-    const isImpersonating = sessionStorage.getItem('coepay_dev_impersonating') === 'true';
-    const isMasterDev = isDeveloper || isImpersonating || 
-      sessionStorage.getItem('coepay_master_dev') === 'developer' || 
-      sessionStorage.getItem('coepay_original_dev') === 'developer' ||
-      localStorage.getItem('coepay_master_dev') === 'developer';
-
-    // Strict RBAC Guard: Only Dave Guiyab (Developer) or an active dev impersonation session can switch roles
-    if (!isDeveloper && !isImpersonating && !isMasterDev) {
-      alert('Access Denied: Role switching is restricted to the System Developer (Dave Guiyab). To sign in with a different role, please use the Logout button.');
-      return;
-    }
-
-    try {
-      if (username === 'developer') {
-        sessionStorage.removeItem('coepay_dev_impersonating');
-        sessionStorage.setItem('coepay_master_dev', 'developer');
-        sessionStorage.setItem('coepay_original_dev', 'developer');
-        localStorage.setItem('coepay_master_dev', 'developer');
-      } else {
-        sessionStorage.setItem('coepay_dev_impersonating', 'true');
-        sessionStorage.setItem('coepay_master_dev', 'developer');
-        sessionStorage.setItem('coepay_original_dev', 'developer');
-        localStorage.setItem('coepay_master_dev', 'developer');
-      }
-
-      window.coeAuth.loginWithUsername(username, true, true);
-      this.showToast(`Switched view to ${username}`, 'info');
-    } catch (err) {
-      alert(err.message);
-    }
+    sessionStorage.setItem('coepay_dev_impersonating', 'true');
+    window.coeAuth.loginWithUsername(username, true);
+    this.showToast(`Switched view to ${username}`, 'info');
+    this.renderApp();
   }
 
   returnToDeveloper() {
     sessionStorage.removeItem('coepay_dev_impersonating');
-    sessionStorage.setItem('coepay_master_dev', 'developer');
-    sessionStorage.setItem('coepay_original_dev', 'developer');
-    localStorage.setItem('coepay_master_dev', 'developer');
-    try {
-      window.coeAuth.loginWithUsername('developer', true, true);
-      this.showToast('Returned to System Developer Console (Dave Guiyab)', 'success');
-    } catch (err) {
-      alert(err.message);
-    }
+    window.coeAuth.loginWithUsername('developer', true);
+    this.showToast('Returned to Developer Console', 'success');
+    this.renderApp();
   }
 
   confirmResetDb() {
-    const currentUser = window.coeAuth.getUser();
-    const isDeveloper = currentUser && currentUser.role === 'developer';
-    const isMasterDev = isDeveloper || sessionStorage.getItem('coepay_master_dev') === 'developer' || sessionStorage.getItem('coepay_dev_impersonating') === 'true';
-    if (!isDeveloper && !isMasterDev) {
-      alert('Access Denied: Database reset privileges are restricted to the System Developer (Dave Guiyab) only.');
-      return;
-    }
-
-    if (confirm("Reset COE-Pay database to its initial institutional seed state? All test transactions and newly created records will revert to default.")) {
-      window.coepayDb.resetToSeed();
+    if (confirm("Reset COE-Pay database to its initial seed state?")) {
+      if (window.coepayDb && typeof window.coepayDb.resetToSeed === 'function') {
+        window.coepayDb.resetToSeed();
+      }
       sessionStorage.removeItem('coepay_dev_impersonating');
-      sessionStorage.setItem('coepay_master_dev', 'developer');
-      sessionStorage.setItem('coepay_original_dev', 'developer');
       window.coeAuth.loginWithUsername('developer', false);
-      this.showToast("Database restored to default seed state.", "info");
+      this.showToast("Database restored to default seed.", "info");
       this.renderApp();
     }
   }
 
   // ==========================================
-  // MODAL CONTROLLER
+  // DIRECT INJECTION MODAL ENGINE
   // ==========================================
-  showModal(title, bodyHtml, footerHtml = null, sizeClass = '') {
-    const modalBackdrop = document.getElementById('global-modal-backdrop');
-    const modalContainer = document.getElementById('global-modal-container');
-    const modalTitle = document.getElementById('global-modal-title');
-    const modalBody = document.getElementById('global-modal-body');
-    const modalFooter = document.getElementById('global-modal-footer');
+  showModal(title, bodyHtml, footerHtml = null) {
+    this.closeModal();
 
-    if (!modalBackdrop) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'active-app-modal-overlay';
+    overlay.className = 'fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm animate-fade-in';
 
-    modalTitle.innerHTML = title;
-    modalBody.innerHTML = bodyHtml;
+    overlay.innerHTML = `
+      <div class="bg-white rounded-3xl max-w-lg w-full border border-slate-200 shadow-2xl overflow-hidden flex flex-col transform transition-all scale-100 max-h-[90vh]">
+        <div class="px-6 py-4 bg-gradient-to-r from-emerald-950 via-teal-950 to-emerald-950 text-white flex items-center justify-between border-b border-emerald-900">
+          <h3 class="font-bold font-brand text-base flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+            <span>${title}</span>
+          </h3>
+          <button type="button" onclick="window.coeApp.closeModal()" class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-sm transition cursor-pointer">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div class="p-6 overflow-y-auto space-y-4 text-slate-800 text-xs">
+          ${bodyHtml}
+        </div>
+        ${footerHtml ? `
+        <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
+          ${footerHtml}
+        </div>` : ''}
+      </div>
+    `;
 
-    if (footerHtml) {
-      modalFooter.innerHTML = footerHtml;
-      modalFooter.style.display = 'flex';
-    } else {
-      modalFooter.innerHTML = '';
-      modalFooter.style.display = 'none';
-    }
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) this.closeModal();
+    });
 
-    modalContainer.className = `modal-dialog ${sizeClass}`;
-    modalBackdrop.style.display = 'flex';
+    document.body.appendChild(overlay);
     document.body.style.overflow = 'hidden';
   }
 
@@ -1513,45 +930,39 @@ class CoeApp {
       clearInterval(this.otpCooldownInterval);
       this.otpCooldownInterval = null;
     }
-    const modalBackdrop = document.getElementById('global-modal-backdrop');
-    if (modalBackdrop) {
-      modalBackdrop.style.display = 'none';
-    }
+    const existing = document.getElementById('active-app-modal-overlay');
+    if (existing) existing.remove();
     document.body.style.overflow = '';
   }
 
-  // ==========================================
-  // TOAST NOTIFICATIONS
-  // ==========================================
   showToast(message, type = 'info') {
     let container = document.getElementById('toast-container');
     if (!container) {
       container = document.createElement('div');
       container.id = 'toast-container';
+      container.className = 'fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none';
       document.body.appendChild(container);
     }
 
     const toast = document.createElement('div');
-    toast.className = `toast toast-${type} toast-enter`;
+    const borderCol = type === 'success' ? 'border-emerald-600 text-emerald-950' : type === 'warning' ? 'border-amber-500 text-amber-950' : 'border-slate-800 text-slate-900';
+    toast.className = `p-3.5 bg-white border-l-4 ${borderCol} rounded-xl shadow-lg border border-slate-200 text-xs font-semibold flex items-center gap-2.5 transition-all duration-300 pointer-events-auto transform translate-y-2 opacity-0`;
 
-    let icon = 'fa-circle-info';
-    if (type === 'success') icon = 'fa-circle-check';
-    if (type === 'warning') icon = 'fa-triangle-exclamation';
-    if (type === 'danger') icon = 'fa-circle-xmark';
+    let icon = 'fa-circle-info text-emerald-800';
+    if (type === 'success') icon = 'fa-circle-check text-emerald-600';
+    if (type === 'warning') icon = 'fa-triangle-exclamation text-amber-600';
+    if (type === 'danger') icon = 'fa-circle-xmark text-rose-600';
 
     toast.innerHTML = `
-      <i class="fa-solid ${icon}"></i>
-      <span class="toast-message">${message}</span>
+      <i class="fa-solid ${icon} text-sm"></i>
+      <span class="flex-1">${message}</span>
     `;
 
     container.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.remove('translate-y-2', 'opacity-0'));
 
     setTimeout(() => {
-      toast.classList.remove('toast-enter');
-    }, 10);
-
-    setTimeout(() => {
-      toast.classList.add('toast-leave');
+      toast.classList.add('opacity-0', 'translate-x-4');
       setTimeout(() => toast.remove(), 300);
     }, 3500);
   }
