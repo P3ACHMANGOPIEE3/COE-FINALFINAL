@@ -474,6 +474,7 @@ class CoeApp {
 
     this.updateEmailDispatchBadge();
   }
+  
   fillCredentials(username, password) {
     const u = document.getElementById('login-username');
     const p = document.getElementById('login-password');
